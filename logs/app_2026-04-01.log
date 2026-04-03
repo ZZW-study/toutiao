@@ -1,0 +1,4 @@
+2026-04-01 18:15:09 | INFO     | services.news_spider:fetch_sina_news:126 - 从新浪抓取 50 条新闻
+2026-04-01 18:15:09 | INFO     | services.news_spider:fetch_qq_news:194 - 从腾讯抓取 0 条新闻
+2026-04-01 18:15:09 | INFO     | crud.news_spider:save_news_batch:128 - 批量保存成功: 50 条新闻
+2026-04-01 18:15:09 | INFO     | crud.news_spider:save_news_batch:140 - 批量保存完成: {'total': 50, 'saved': 50, 'skipped': 0, 'failed': 0}
