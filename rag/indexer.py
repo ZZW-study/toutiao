@@ -64,6 +64,7 @@ async def index_all_news(batch_size: int = 100) -> dict:
             logger.info(f"共有 {total} 条新闻需要索引")
 
             # ========== 第二步：分批处理 ==========
+            # 分批读取 DB 并调用向量化函数，降低内存占用
             offset = 0
 
             while offset < total:
@@ -80,17 +81,19 @@ async def index_all_news(batch_size: int = 100) -> dict:
                 if not news_batch:
                     break
 
-                # 转换为字典列表
+                # 转换为字典列表，供向量化模块使用
                 news_list = []
                 for news in news_batch:
                     news_list.append({
                         "id": news.id,
                         "title": news.title,
                         "content": news.content,
-                        "category_id": news.category_id
+                        "category_id": news.category_id,
                     })
 
-                # 添加到向量存储
+                # 添加到向量存储（同步调用），返回成功添加数量
+                # 注意：add_news_to_vectorstore 可能内部依赖文件系统或 embedding 模型，
+                # 在生产环境中可能需要额外的错误重试或限流。
                 added = add_news_to_vectorstore(news_list)
                 indexed += added
                 skipped += len(news_list) - added

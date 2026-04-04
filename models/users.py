@@ -1,8 +1,16 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Index, Integer, String, Enum, DateTime,ForeignKey #枚举，全称 Enumeration，
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column       #本质是用来定义一组有名称、有固定取值范围的常量集合。
+from sqlalchemy import Index, Integer, String, Enum, DateTime, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from utils.repr_return import generate_repr
+
+
+"""用户相关的数据库模型定义。
+
+包含 `User`（用户信息）和 `UserToken`（用户登录令牌）两个表的 ORM 映射定义，
+字段均带有注释（comment）方便数据库层面的说明与文档生成。
+"""
+
 
 # 定义ORM基类
 class Base(DeclarativeBase):

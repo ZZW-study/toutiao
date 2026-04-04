@@ -1,13 +1,23 @@
-from sqlalchemy.orm import DeclarativeBase,Mapped,mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime
-from sqlalchemy import DateTime, ForeignKey,Integer,String,Text,Index
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Index
 from typing import Optional
 from utils.repr_return import generate_repr
 
+
+"""数据库模型定义：新闻（News）与分类（Category）。
+
+本文件定义 ORM 映射类，分别对应底层数据库中的 `news` 和
+`news_category` 表。使用 SQLAlchemy 2.0 风格的 DeclarativeBase，
+并在字段上使用 `mapped_column` 指定列类型、约束与注释（comment），
+便于自动建表与文档生成。
+"""
+
+
 # 先看新闻数据库，有没有公共的列表:有 -->创建时间，更新时间 -->封装为基础模型类
 class Base(DeclarativeBase):
-    created_at: Mapped[datetime] = mapped_column(  # 没有mapped_column()，created_at就只是一个普通的 Python 属性，                                                  
-        DateTime,                                   # 无法和数据库表产生任何关联，ORM 也就失去了意义。
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
         default=datetime.now,
         comment="创建时间"
     )
