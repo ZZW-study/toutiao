@@ -10,11 +10,11 @@ ASYNC_DATABASE_URL = settings.MYSQL_DATABASE_URL
 async_engine = create_async_engine(
     url=ASYNC_DATABASE_URL,
     echo = settings.DEBUG,
-    pool_size = settings.MYSQL_DB_POOL_SIZE, # 核心连接数
-    max_overflow = settings.MYSQL_DB_OVERFLOW, # 最大溢出连接数
-    pool_timeout = 30,   # 获取连接超时时间（秒）
-    pool_recycle = 3600, # 连接回收时间（秒），防止连接被MySQL断开
-    pool_pre_ping = True, # 连接前ping，确保连接有效
+    pool_size = settings.MYSQL_DB_POOL_SIZE,    # 核心连接数
+    max_overflow = settings.MYSQL_DB_OVERFLOW,  # 最大溢出连接数
+    pool_timeout = 30,                          # 获取连接超时时间（秒）
+    pool_recycle = 3600,                        # 连接回收时间（秒），防止连接被MySQL断开
+    pool_pre_ping = True,                       # 连接前ping，确保连接有效
     connect_args = {
         "charset": "utf8mb4",
         "connect_timeout": 10

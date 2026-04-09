@@ -1,7 +1,8 @@
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Index
 from typing import Optional
+from models.base import Base, TimestampMixin
 from utils.repr_return import generate_repr
 
 
@@ -14,24 +15,13 @@ from utils.repr_return import generate_repr
 """
 
 
-# 先看新闻数据库，有没有公共的列表:有 -->创建时间，更新时间 -->封装为基础模型类
-class Base(DeclarativeBase):
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now,
-        comment="创建时间"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now,
-        onupdate=datetime.now,
-        comment="更新时间"
-    )
-
-
 # 新闻类别类 --- 它与数据库中的某一张实际数据表.
 # 建立了映射关系。通过操作Category类，即可间接操作对应的底层数据表，无需直接编写原生 SQL。
-class Category(Base):  
+class Category(Base):
+    """新闻分类表 ORM 模型。
+
+    注：Category 表不需要时间戳字段，因此不继承 TimestampMixin。
+    """  
     __tablename__ = "news_category"
 
     id: Mapped[int] = mapped_column(

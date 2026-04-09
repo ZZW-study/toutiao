@@ -1,6 +1,7 @@
 from datetime import datetime
 from sqlalchemy import UniqueConstraint, Index, Integer, ForeignKey, DateTime
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+from models.base import Base
 from models.news import News
 from models.users import User
 from utils.repr_return import generate_repr
@@ -10,10 +11,6 @@ from utils.repr_return import generate_repr
 
 记录用户对文章的收藏行为。通过唯一约束与索引提升插入安全性与查询性能。
 """
-
-
-class Base(DeclarativeBase):
-    pass
 
 
 class Favorite(Base):

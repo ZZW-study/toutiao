@@ -11,32 +11,40 @@
 """
 
 import json
-import os
 from typing import Dict, Any
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import AgentState
+from configs.settings import get_settings
 from utils.logger import get_logger
 
 # 获取日志记录器
 logger = get_logger(name="AnalyzeNode")
 
+# 获取配置
+settings = get_settings()
+
 
 # ========== 配置 LLM ==========
-# 从环境变量获取配置，设置默认值
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# 从统一配置获取 LLM 参数
+OPENAI_API_KEY = settings.OPENAI_API_KEY
+OPENAI_API_BASE = settings.OPENAI_API_BASE
+LLM_MODEL = settings.LLM_ANALYZE_MODEL
 
 # 创建 LLM 实例
 # temperature=0 表示输出更加确定性，适合分析任务
 llm = ChatOpenAI(
     model=LLM_MODEL,
-    temperature=0,  # 分析任务需要更确定的输出
+    temperature=0.1,                  # 分析任务需要更确定的输出
     openai_api_key=OPENAI_API_KEY,
-    openai_api_base=OPENAI_API_BASE
+    openai_api_base=OPENAI_API_BASE,
+    max_completion_tokens=10000,
+    streaming=True,
+    max_retries=5,
+    timeout=60,
+    cache=True
 )
 
 

@@ -17,7 +17,7 @@
 """
 
 import asyncio
-from typing import Optional, List
+from typing import List
 
 from sqlalchemy import select
 

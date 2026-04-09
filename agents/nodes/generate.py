@@ -13,24 +13,27 @@
 """
 
 import json
-import os
 from typing import Dict, Any
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import AgentState
+from configs.settings import get_settings
 from utils.logger import get_logger
 
 # 获取日志记录器
 logger = get_logger(name="GenerateNode")
 
+# 获取配置
+settings = get_settings()
+
 
 # ========== 配置 LLM ==========
-# 从环境变量获取配置
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# 从统一配置获取 LLM 参数
+OPENAI_API_KEY = settings.OPENAI_API_KEY
+OPENAI_API_BASE = settings.OPENAI_API_BASE
+LLM_MODEL = settings.LLM_GENERATE_MODEL
 
 # 创建 LLM 实例
 # temperature=0.3 让回答有一定的创造性，但仍然基于事实

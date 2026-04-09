@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import Index, Integer, String, Enum, DateTime, ForeignKey
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+from models.base import Base, TimestampMixin
 from utils.repr_return import generate_repr
 
 
@@ -12,12 +13,8 @@ from utils.repr_return import generate_repr
 """
 
 
-# 定义ORM基类
-class Base(DeclarativeBase):
-    pass
-
 # 用户信息表ORM模型
-class User(Base):
+class User(Base, TimestampMixin):
     """
     用户信息表ORM模型
     """
@@ -66,21 +63,11 @@ class User(Base):
         comment="个人简介"
     )
     phone: Mapped[Optional[str]] = mapped_column(
-        String(20), 
-        unique=True, 
+        String(20),
+        unique=True,
         comment="手机号"
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now,
-        comment="创建时间"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now,
-        onupdate=datetime.now,
-        comment="更新时间"
-    )
+    # 注：created_at 和 updated_at 由 TimestampMixin 提供
     def __repr__(self):
         return generate_repr(self)
 

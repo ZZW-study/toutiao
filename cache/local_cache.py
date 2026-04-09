@@ -4,8 +4,7 @@ from typing import Any,Optional,Dict,Type
 from cachetools import LRUCache # 封装各类缓存策略的工具库,LRU缓存策略
 
 from utils.logger import get_logger
-# 全局统一空值标识
-EMPTY_CACHE_FLAG = "__CACHE_EMPTY__"
+from cache.constants import EMPTY_CACHE_FLAG
 # 本地缓存是纯内存同步操作，无 IO 等待，用线程比异步更轻量、更稳定、无事件循环冲突
 class LocalLRUCache:
     """

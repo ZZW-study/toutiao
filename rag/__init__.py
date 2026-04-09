@@ -15,11 +15,8 @@ RAG 流程：
 """
 
 from rag.vectorstore import get_vectorstore, get_embeddings
-from rag.indexer import index_all_news, index_news_by_id
 
 __all__ = [
     "get_vectorstore",
     "get_embeddings",
-    "index_all_news",
-    "index_news_by_id"
 ]

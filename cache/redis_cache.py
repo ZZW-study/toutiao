@@ -16,11 +16,10 @@ from threading import RLock
 
 from utils.logger import get_logger
 from configs.redis_conf import redis_client, UNLOCK_SCRIPT,RedisConfig
+from cache.constants import EMPTY_CACHE_FLAG
 
 logger = get_logger(name="RedisCache")
 T = TypeVar("T")
-# 全局统一空值标识
-EMPTY_CACHE_FLAG = "__CACHE_EMPTY__"
 # ====================== 缓存基础工具类 ======================
 class CacheUtil:
     """静态缓存工具类：封装Redis所有基础操作，统一异常处理、序列化、空值处理"""

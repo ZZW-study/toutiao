@@ -12,12 +12,12 @@ from typing import Optional
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
 
-from configs.news_spider_conf import get_news_spider_settings
+from configs.settings import get_settings
 from utils.logger import get_logger
 
 logger = get_logger(name="NewsSpider")
 
-settings = get_news_spider_settings()
+settings = get_settings()
 
 
 def _now():
@@ -49,13 +49,13 @@ class NewsSpiderService:
         text = f"{title} {content} {description}".lower()
 
         category_scores = {}
-        for category, keywords in settings.CLASSIFICATION_RULES.items():
+        for category, keywords in settings.SPIDER_CLASSIFICATION_RULES.items():
             score = sum(1 for keyword in keywords if keyword.lower() in text)
             if score > 0:
                 category_scores[category] = score
 
         if not category_scores:
-            return settings.DEFAULT_CATEGORY_ID
+            return settings.SPIDER_DEFAULT_CATEGORY_ID
 
         best_category = max(category_scores, key=category_scores.get)
         category_id_map = {
@@ -69,17 +69,17 @@ class NewsSpiderService:
             "财经": 8
         }
 
-        return category_id_map.get(best_category, settings.DEFAULT_CATEGORY_ID)
+        return category_id_map.get(best_category, settings.SPIDER_DEFAULT_CATEGORY_ID)
 
     @staticmethod
     async def fetch_sina_news(page: int = 1) -> list[NewsItem]:
         """抓取新浪新闻"""
         news_list = []
-        url = settings.NEWS_SOURCES[0]["url"].format(num=settings.NEWS_PER_SOURCE, page=page)
+        url = settings.SPIDER_NEWS_SOURCES[0]["url"].format(num=settings.SPIDER_NEWS_PER_SOURCE, page=page)
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=settings.REQUEST_TIMEOUT) as response:
+                async with session.get(url, timeout=settings.SPIDER_REQUEST_TIMEOUT) as response:
                     if response.status != 200:
                         logger.warning(f"新浪新闻请求失败: {response.status}")
                         return []
@@ -130,11 +130,11 @@ class NewsSpiderService:
     async def fetch_qq_news() -> list[NewsItem]:
         """抓取腾讯新闻"""
         news_list = []
-        url = settings.NEWS_SOURCES[1]["url"]
+        url = settings.SPIDER_NEWS_SOURCES[1]["url"]
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=settings.REQUEST_TIMEOUT) as response:
+                async with session.get(url, timeout=settings.SPIDER_REQUEST_TIMEOUT) as response:
                     if response.status != 200:
                         logger.warning(f"腾讯新闻请求失败: {response.status}")
                         return []
@@ -199,10 +199,10 @@ class NewsSpiderService:
         """从所有来源抓取新闻"""
         tasks = []
 
-        if settings.NEWS_SOURCES[0]["enabled"]:
+        if settings.SPIDER_NEWS_SOURCES[0]["enabled"]:
             tasks.append(NewsSpiderService.fetch_sina_news())
 
-        if settings.NEWS_SOURCES[1]["enabled"]:
+        if settings.SPIDER_NEWS_SOURCES[1]["enabled"]:
             tasks.append(NewsSpiderService.fetch_qq_news())
 
         results = await asyncio.gather(*tasks, return_exceptions=True)

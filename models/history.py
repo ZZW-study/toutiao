@@ -1,5 +1,6 @@
 from sqlalchemy import Integer, DateTime, ForeignKey, Index, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
+from sqlalchemy.orm import Mapped, mapped_column
+from models.base import Base
 from models.news import News
 from models.users import User
 from utils.repr_return import generate_repr
@@ -11,10 +12,6 @@ from datetime import datetime
 记录用户对新闻的浏览行为，每条记录包含用户、新闻及浏览时间。
 包含若干索引以加速基于用户或新闻的查询操作。
 """
-
-
-class Base(DeclarativeBase):
-    pass
 
 
 # 用户浏览历史表ORM模型
