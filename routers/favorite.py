@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from configs.db_conf import get_db
+from configs.db import get_db
 from crud import favorite
 from middlewares.token_bucket_rate_limit import rate_limit_dependency
 from models.users import User
@@ -91,4 +91,3 @@ async def clear_favorite(
 
     count = await favorite.remove_all_favorites(db, user.id)
     return success_response(message=f"清空了{count}条记录")
-

@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import text
-from configs.db_conf import AsyncSessionLocal
+from configs.db import AsyncSessionLocal
 from services.news_spider import NewsSpiderService
 from crud.news_spider import NewsSpiderCRUD
 from utils.logger import get_logger

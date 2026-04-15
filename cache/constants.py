@@ -8,4 +8,4 @@
 # 空值缓存唯一标识
 # 用于防止缓存穿透：当数据库查询结果为空时，缓存此标识而非 None
 # 查询时遇到此标识，直接返回 None，避免重复查询数据库
-EMPTY_CACHE_FLAG = "__CACHE_EMPTY__"
+EMPTY_CACHE_FLAG = "__CACHE_EMPTY__"  # 把这个常量值保存到 EMPTY_CACHE_FLAG 中，后面会作为固定配置反复使用

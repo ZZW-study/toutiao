@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from configs.db_conf import get_db
+from configs.db import get_db
 from crud import users
 from models.users import User
 
@@ -78,4 +78,3 @@ async def get_current_user(
     request.state.user_id = user.id
     request.state.auth_token = token
     return user
-

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from configs.db_conf import get_db
+from configs.db import get_db
 from crud import news
 from middlewares.token_bucket_rate_limit import rate_limit_dependency
 from tasks.news_tasks import increase_news_popularity
@@ -93,4 +93,3 @@ async def get_news_detail(
             "relatedNews": related_news,
         },
     )
-

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from configs.db_conf import get_db
+from configs.db import get_db
 from crud import history
 from middlewares.token_bucket_rate_limit import rate_limit_dependency
 from models.users import User
@@ -95,4 +95,3 @@ async def clear_view_history_list(
     if not has_clear:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览历史记录不存在")
     return success_response(message="清空成功")
-

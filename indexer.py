@@ -22,7 +22,7 @@ from typing import List
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
-from configs.db_conf import AsyncSessionLocal
+from configs.db import AsyncSessionLocal
 from models.news import News
 from rag.vectorstore import (
     add_news_to_vectorstore,
