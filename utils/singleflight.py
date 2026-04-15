@@ -25,6 +25,7 @@ class SingleFlight:
 
     def __init__(self):
         # 存储正在执行的任务：key -> future
+        """初始化正在飞行中的请求映射表，用于合并并发请求。"""
         self._inflight: Dict[str, asyncio.Future] = {}  # 结果占位符，专门表示还未执行完成的异步操作的最终结果。
 
     async def do(self, key: str, func: Callable[[], Any]) -> Any:

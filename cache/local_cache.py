@@ -1,228 +1,184 @@
+"""本地缓存实现。
+
+这一层只负责进程内短 TTL 热点缓存，不承担跨进程共享职责。
+相比旧实现，这里重点修复了三个问题：
+
+1. 读写都在同一把锁内完成，避免“检查存在后在锁外取值”的竞态。
+2. 明确区分“未命中”和“命中了空值缓存”。
+3. 不再额外起后台清理线程，而是在访问时顺手回收过期数据，降低复杂度。
+"""
+
+from __future__ import annotations
+
 import time
-from threading import RLock,Thread # Reentrant Lock可重入锁,同一个线程可以多次获取这个锁
-from typing import Any,Optional,Dict,Type
-from cachetools import LRUCache # 封装各类缓存策略的工具库,LRU缓存策略
+from collections import OrderedDict
+from dataclasses import dataclass
+from threading import RLock
+from typing import Any, Dict, Optional
 
-from utils.logger import get_logger
 from cache.constants import EMPTY_CACHE_FLAG
-# 本地缓存是纯内存同步操作，无 IO 等待，用线程比异步更轻量、更稳定、无事件循环冲突
-class LocalLRUCache:
-    """
-    本地LRU缓存封装类
-    特性：线程安全、TTL自动过期、LRU淘汰、命中率统计(缓存收益)、后台自动清理、上下文管理
-    适配多级缓存架构：仅存储热点数据，低延迟高性能
-    """
-    def __init__(
-            self,
-            maxsize: int = 1000,
-            ttl: int = 300,
-            auto_cleanup_interval: int = 60,
-            enable_auto_cleanup: bool = True
-    ):
-        """
-        初始化本地LRU缓存
-        :param maxsize: 缓存最大容量，默认1000（热点数据专用，小容量）
-        :param ttl: 缓存默认过期时间（秒），默认5分钟
-        :param auto_cleanup_interval: 后台自动清理间隔（秒）
-        :param enable_auto_cleanup: 是否开启自动清理
-        """
-        self._cache: LRUCache = LRUCache(maxsize=maxsize)  
-        self._expire_times:  Dict[Any,float] = {} # 缓存键过期时间
-        self._lock: RLock = RLock() # 线程重入锁（高并发）
+from utils.logger import get_logger
 
-        # 缓存配置
+
+@dataclass(slots=True)
+class LocalCacheEntry:
+    """本地缓存命中结果。
+
+    `hit=True` 表示当前 key 在缓存中存在，即使业务值为 `None` 也算命中。
+    这样上层多级缓存就能区分“负缓存命中”和“完全未命中”。
+    """
+
+    hit: bool
+    value: Any = None
+
+
+@dataclass(slots=True)
+class _StoredValue:
+    """本地缓存内部存储结构。"""
+
+    value: Any
+    expire_at: float
+
+
+class LocalLRUCache:
+    """线程安全的本地 LRU + TTL 缓存。
+
+    设计取舍：
+    - 使用 `OrderedDict` 明确维护 LRU 顺序，逻辑直观，便于加中文注释。
+    - TTL 按条目单独记录，兼容不同 key 传入不同 TTL。
+    - 只在访问路径上做轻量清理，避免后台线程带来的生命周期问题。
+    """
+
+    def __init__(self, maxsize: int = 1000, ttl: int = 300) -> None:
+        """初始化本地缓存的容量、默认 TTL、锁和统计字段。"""
         self.maxsize = maxsize
         self.ttl = ttl
-        self.auto_cleanup_interval = auto_cleanup_interval
-        # 空值缓存唯一标识：避免与业务数据冲突
-        self.EMPTY_CACHE_FLAG = EMPTY_CACHE_FLAG
+        self._cache: "OrderedDict[Any, _StoredValue]" = OrderedDict()
+        self._lock = RLock()
+        self._empty_marker = EMPTY_CACHE_FLAG
 
-        # 缓存监控统计指标
+        # 下面这组统计字段保留给排查缓存命中率使用。
         self.hit_count = 0
         self.miss_count = 0
         self.total_count = 0
 
-        # 后台清理线程控制
-        self._cleanup_thread: Optional[Thread] = None  # 线程实例变量
-        self._stop_cleanup = False # 线程停止标志
-
-        # 绑定日志模块
         self.logger = get_logger(name="LocalLRUCache")
 
-        # 启动后台自动清理
-        if enable_auto_cleanup and self.ttl > 0:
-            self._start_auto_cleanup()
+    def _now(self) -> float:
+        """返回单调时钟时间，避免系统时间回拨影响过期判断。"""
+        return time.monotonic()
 
+    def _purge_expired_locked(self) -> None:
+        """删除已过期的 key。
 
-    def _start_auto_cleanup(self) ->None:
-        """启动守护线程，后台自动清理过期缓存"""
-        def cleanup_task(): # cleanup_task 运行在 独立守护子线程 中，time.sleep 仅阻塞子线程，主线程 / 业务线程完全不受影响
-            while not self._stop_cleanup:
-                try:
-                    self._clean_expired()
-                    time.sleep(self.auto_cleanup_interval)
-                except Exception as e:
-                    self.logger.error(f"缓存自动清理异常：{e}")
-        
-        self._cleanup_thread = Thread( # 设置一个线程执行某任务
-            target=cleanup_task, # 指定线程要执行的任务函数：线程启动后，会自动调用 cleanup_task() 这个函数，专门做缓存清理工作。
-            daemon=True,
-            name="local-cache-cleanup-thread" # 设置为守护线程：核心作用是主程序退出时，这个线程会自动强制结束，不用等它执行完，避免程序关不掉。
-        )
+        这里必须在持锁状态下调用，否则会出现遍历和删除并发冲突。
+        """
 
-        self._cleanup_thread.start() # 开启线程
-        self.logger.info(
-            "本地缓存后台自动清理启动",  
-            interval=self.auto_cleanup_interval,  # 自定义参数：清理间隔,会自动计入日志
-            maxsize=self.maxsize,                # 自定义参数：缓存最大容量
-            default_ttl=self.ttl                 # 自定义参数：默认过期时间
-        )
+        now = self._now()
+        expired_keys = [
+            key for key, stored in self._cache.items() if stored.expire_at <= now
+        ]
+        for key in expired_keys:
+            self._cache.pop(key, None)
 
+    def _ensure_capacity_locked(self) -> None:
+        """在写入后执行 LRU 淘汰。"""
 
-    def is_expired(self,key: Any) ->bool:
-        """判断缓存键是否过期"""
-        with self._lock: # with保证进入临界区前获取锁，退出时自动释放，同一时刻只有一个线程能执行被锁保护的代码
-            if key not in self._expire_times:
-                return True
-            return time.time() > self._expire_times[key]
+        while len(self._cache) > self.maxsize:
+            # `last=False` 表示弹出最久未使用的条目。
+            evicted_key, _ = self._cache.popitem(last=False)
+            self.logger.debug("本地缓存触发 LRU 淘汰", key=evicted_key)
 
+    def get_entry(self, key: Any) -> LocalCacheEntry:
+        """返回带命中状态的读取结果。"""
 
-    def get(self,key: Any) ->Optional[Any]:
-        """获取缓存数据"""
         with self._lock:
             self.total_count += 1
-            # 未命中 / 已过期
-            if key not in self._cache or self.is_expired(key):
+            self._purge_expired_locked()
+
+            stored = self._cache.get(key)
+            if stored is None:
                 self.miss_count += 1
-                # 清理无效键
-                if key in self._cache:
-                    del self._cache[key]
-                    del self._expire_times[key]
-                self.logger.debug("缓存未命中/已过期", key=key)
-                return None
-        
-        # 缓存命中
-        self.hit_count += 1
-        value = self._cache[key]
-        self.logger.debug("缓存命中",key=key)
-        return value
-    
+                return LocalCacheEntry(hit=False, value=None)
 
-    def set(self,key: Any,value: Any,ttl: Optional[int] = None) ->None:
-        """设置缓存"""
+            # 命中后要移动到尾部，保持 LRU 顺序。
+            self._cache.move_to_end(key)
+            self.hit_count += 1
+
+            if stored.value == self._empty_marker:
+                return LocalCacheEntry(hit=True, value=None)
+            return LocalCacheEntry(hit=True, value=stored.value)
+
+    def get(self, key: Any) -> Optional[Any]:
+        """兼容旧接口：只返回值，不返回命中状态。"""
+
+        return self.get_entry(key).value
+
+    def set(self, key: Any, value: Any, ttl: Optional[int] = None) -> None:
+        """写入缓存。
+
+        `None` 会被转换成专用空值标记，这样上层仍能识别这是一次有效的负缓存。
+        """
+
         if self.maxsize <= 0:
-            self.logger.warning("缓存容量为0，跳过写入", key=key)
+            self.logger.warning("本地缓存容量为 0，跳过写入", key=key)
             return
-        
-        # 设置过期时间-->设置缓存到LRU类，设置过期时间到_expire_times字典
+
+        ttl_seconds = ttl if ttl is not None else self.ttl
+        expire_at = self._now() + max(ttl_seconds, 1)
+        stored_value = self._empty_marker if value is None else value
+
         with self._lock:
-            expire_ttl = ttl or self.ttl
-            expire_time = time.time() + expire_ttl
-            if value is None:
-                self._cache[key] = self.EMPTY_CACHE_FLAG
-                self._expire_times[key] = expire_time
-                return 
-            self._cache[key] = value
-            self._expire_times[key] = expire_time
-            self.logger.debug("缓存写入成功", key=key, expire_ttl=expire_ttl)
+            self._purge_expired_locked()
+            self._cache[key] = _StoredValue(value=stored_value, expire_at=expire_at)
+            self._cache.move_to_end(key)
+            self._ensure_capacity_locked()
 
+    def delete(self, key: Any) -> None:
+        """删除单个缓存键。"""
 
-    def delete(self,key: Any) ->None:
-        """手动删除指定缓存键"""
         with self._lock:
-            if key in self._cache:
-                del self._cache[key]
-                del self._expire_times[key]
-                self.logger.debug("缓存删除成功", key=key)
+            self._cache.pop(key, None)
 
+    def touch(self, key: Any, ttl: Optional[int] = None) -> bool:
+        """刷新某个 key 的过期时间。"""
 
-    def _clean_expired(self) ->int:
-        """主动清理所有过期缓存，返回清理数量"""
+        ttl_seconds = ttl if ttl is not None else self.ttl
         with self._lock:
-            # 过期的键
-            expired_keys = [k for k in self._cache if self.is_expired(k)]
-            for key in expired_keys:
-                del self._cache[key]
-                del self._expire_times[key]
-            
-        self.logger.info("过期缓存清理成功",count = len(expired_keys))
-        return len(expired_keys)
-    
-
-    def touch(self,key: Any,ttl: Optional[int] = None) ->bool:
-        """刷新缓存过期时间（延长生命周期）"""
-        with self._lock:
-            if key not in self._cache or self.is_expired(key):
+            self._purge_expired_locked()
+            stored = self._cache.get(key)
+            if stored is None:
                 return False
-        
-        new_ttl = ttl or self.ttl
-        self._expire_times[key] = time.time() + new_ttl
-        self.logger.debug("缓存过期时间刷新", key=key, new_ttl=new_ttl)
-        return True
+            stored.expire_at = self._now() + max(ttl_seconds, 1)
+            self._cache.move_to_end(key)
+            return True
 
+    def clear(self) -> None:
+        """清空本地缓存。"""
 
-    def get_status(self) ->Dict[str,Any]:
-        """获取缓存统计信息（监控/性能优化专用）"""
         with self._lock:
-            hit_rate = (self.hit_count / self.total_count * 100) if self.total_count > 0 else 0.0
-            status = {
+            self._cache.clear()
+
+    def get_status(self) -> Dict[str, Any]:
+        """返回基础监控信息。"""
+
+        with self._lock:
+            self._purge_expired_locked()
+            hit_rate = (
+                round(self.hit_count / self.total_count * 100, 2)
+                if self.total_count
+                else 0.0
+            )
+            return {
                 "max_capacity": self.maxsize,
                 "current_size": len(self._cache),
                 "hit_count": self.hit_count,
                 "miss_count": self.miss_count,
                 "total_requests": self.total_count,
-                "hit_rate": round(hit_rate, 2),
-                "default_ttl": self.ttl
+                "hit_rate": hit_rate,
+                "default_ttl": self.ttl,
             }
-            self.logger.info("缓存统计信息", **status)
-            return status
-
-    def clear(self) -> None:
-        """清除所有缓存"""
-        with self._lock:
-            self._cache.clear()
-            self._expire_times.clear()
 
 
-    def stop(self) ->None:
-        """停止后台清理线程，释放资源"""
-        self._stop_cleanup = True
-        if self._cleanup_thread:
-            self._cleanup_thread.join(timeout=5) # 让【主线程】停下来，死等【子线程】运行结束，才能继续往下走。让主线程等待清理子线程最多 5 秒，超时后自动继续执行，避免程序卡死。
-        self.logger.info("本地缓存后台清理线程已停止")
-
-    def __enter__(self) ->"LocalLRUCache":
-        """支持上下文管理器"""
-        return self
-
-    def __exit__(
-            self,
-            exc_type: Optional[Type[BaseException]],
-            exc: Optional[BaseException],
-            tb: Optional[Any]
-    ) -> None:
-        """
-        上下文退出：自动释放资源
-        """
-        if exc_type is not None:
-            self.logger.error(
-                "缓存上下文发生异常",
-                exc_type=str(exc_type),
-                error=str(exc),
-                exc_info=True
-            )
-        # 安全释放资源
-        self.stop()
-        self.clear()
-
-    def __del__(self) ->None:
-        """析构函数保障资源释放"""
-        try:
-            self.stop()
-        except Exception as e:
-            pass
-
-        
-# 全局单例
-local_cache = LocalLRUCache(maxsize=1000,ttl = 300)
-
+# 全局单例：供多级缓存协调器复用。
+local_cache = LocalLRUCache(maxsize=1000, ttl=300)

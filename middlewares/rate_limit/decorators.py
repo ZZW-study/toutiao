@@ -1,94 +1,126 @@
 # -*- coding: utf-8 -*-
-"""限流装饰器和依赖注入。
+"""限流装饰器与 FastAPI 依赖。"""
 
-提供 FastAPI 接口集成方式：
-1. 装饰器：为单个接口添加限流
-2. 依赖注入：用于全局/路由组限流
-"""
+from __future__ import annotations
 
-
-from fastapi.requests import Request
-from fastapi import HTTPException, status
-from fastapi.responses import JSONResponse
-from typing import Callable, TypeVar, Coroutine, Any
 from functools import wraps
+from typing import Any, Callable, Coroutine, TypeVar
 
-from utils.logger import get_logger
+from fastapi import Depends, HTTPException, status
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from configs.db_conf import get_db
 from middlewares.rate_limit.config import RateLimitConfig, RateLimitDimension
 from middlewares.rate_limit.limiter import UnifiedRateLimiter, unified_limiter
-
+from utils.auth import resolve_request_user_id
+from utils.logger import get_logger
 
 T = TypeVar("T")
-logger = get_logger(name="RateLimitDecorator")
+logger = get_logger(name="RateLimit")
 
 
-# FastAPI 接口集成：装饰器 + 依赖注入（业务接口直接使用）
-def rate_limit(capacity: int = None, rate: float = None, dimension: RateLimitDimension = None):
-    """
-    限流装饰器：为单个FastAPI接口添加限流规则
-    优先级：装饰器传参 > 全局settings配置
-    :param capacity: 令牌桶容量（可选）
-    :param rate: 令牌生成速率（可选）
-    :param dimension: 限流维度（可选）
-    :return: 装饰器
-    """
-    def decorator(func: Callable[..., Coroutine[Any, Any, T]]) -> Callable[..., Coroutine[Any, Any, T]]:
-            # 保留原函数的元信息（函数名、注释等）
-            @wraps(func)
-            async def wrapper(*args: Any, **kwargs: Any) -> T:
-                # 自动提取Request对象：优先从关键字参数，再从位置参数查找
-                request: Request = kwargs.get("request")
-                # 未找到Request对象，跳过限流直接执行接口
-                if not request:
-                    return await func(*args, **kwargs)
+def _find_request(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Request | None:
+    """从位置参数或关键字参数中提取 Request。"""
 
-                # 复用限流器逻辑，避免每次请求创建新实例
-                cfg = RateLimitConfig()
-                limiter = UnifiedRateLimiter(cfg)
-                res = await limiter.check(request)
-                # 限流不通过，抛出429异常（请求过多）
-                if not res.allowed:
-                    raise HTTPException(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail={
-                            "msg": res.reason,          # 拦截原因
-                            "retry_after": res.retry_after  # 建议重试时间
-                        },
-                        headers={"Retry-After": str(round(res.retry_after, 1))}
-                    )
+    request = kwargs.get("request")
+    if isinstance(request, Request):
+        return request
 
-                # 限流通过，执行原接口逻辑
+    for arg in args:
+        if isinstance(arg, Request):
+            return arg
+
+    return None
+
+
+def _build_config(
+    capacity: int | None,
+    rate: float | None,
+    dimension: RateLimitDimension | None,
+) -> RateLimitConfig:
+    """把装饰器参数覆盖到默认配置上。"""
+
+    base = RateLimitConfig()
+    return RateLimitConfig(
+        capacity=capacity if capacity is not None else base.capacity,
+        rate=rate if rate is not None else base.rate,
+        dimension=dimension if dimension is not None else base.dimension,
+    )
+
+
+def rate_limit(
+    capacity: int | None = None,
+    rate: float | None = None,
+    dimension: RateLimitDimension | None = None,
+) -> Callable[[Callable[..., Coroutine[Any, Any, T]]], Callable[..., Coroutine[Any, Any, T]]]:
+    """为单个接口附加自定义限流规则。"""
+
+    config = _build_config(capacity=capacity, rate=rate, dimension=dimension)
+    limiter = UnifiedRateLimiter(config)
+
+    def decorator(
+        func: Callable[..., Coroutine[Any, Any, T]]
+    ) -> Callable[..., Coroutine[Any, Any, T]]:
+        """接收原函数并返回带限流校验的包装函数。"""
+
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> T:
+            """在执行真实路由前，先完成请求级限流检查。"""
+            request = _find_request(args, kwargs)
+            if request is None:
+                # 没有 Request 说明当前函数并不是 FastAPI 路由，直接放行。
                 return await func(*args, **kwargs)
-            return wrapper
+
+            result = await limiter.check(request)
+            if not result.allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=result.reason,
+                    headers={"Retry-After": str(max(int(result.retry_after), 1))},
+                )
+
+            return await func(*args, **kwargs)
+
+        return wrapper
+
     return decorator
 
 
-async def rate_limit_dependency(request: Request):
+async def rate_limit_dependency(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """FastAPI 依赖版限流入口。
+
+    这里会先尝试解析用户身份，再统一执行限流。
+    未登录请求自动回退到 IP 限流，已登录请求则可以触发用户维度限流。
     """
-    限流依赖注入：用于全局/路由组限流，无需每个接口加装饰器
-    :param request: FastAPI Request对象
-    """
+
     try:
-        res = await unified_limiter.check(request)
-        if not res.allowed:
-            raise HTTPException(429, detail=res.reason)
+        await resolve_request_user_id(request=request, db=db)
+        result = await unified_limiter.check(request)
+        if not result.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=result.reason,
+                headers={"Retry-After": str(max(int(result.retry_after), 1))},
+            )
     except HTTPException:
-        # 重新抛出HTTP异常，让FastAPI处理
         raise
-    except Exception as e:
-        # 记录异常日志，便于排查问题
-        logger.error(f"[限流依赖注入异常] {str(e)}")
+    except Exception as exc:
+        logger.warning("限流依赖执行异常，降级放行", error=str(exc), exc_info=True)
 
 
-async def custom_rate_limit_handler(request: Request, exc: Exception):
-    """
-    自定义限流异常处理器：处理 RateLimitExceeded 异常
-    """
+async def custom_rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+    """统一限流异常响应。"""
+
     return JSONResponse(
         status_code=429,
         content={
             "code": 429,
             "message": "请求过于频繁，请稍后再试",
-            "detail": str(exc) if str(exc) else "Rate limit exceeded"
-        }
+            "detail": str(exc) if str(exc) else "Rate limit exceeded",
+        },
     )

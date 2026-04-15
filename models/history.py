@@ -1,31 +1,35 @@
-from sqlalchemy import Integer, DateTime, ForeignKey, Index, UniqueConstraint
+"""浏览历史表模型。"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+
 from models.base import Base
 from models.news import News
 from models.users import User
 from utils.repr_return import generate_repr
-from datetime import datetime
 
 
-"""浏览历史数据模型。
-
-记录用户对新闻的浏览行为，每条记录包含用户、新闻及浏览时间。
-包含若干索引以加速基于用户或新闻的查询操作。
-"""
-
-
-# 用户浏览历史表ORM模型
 class ViewHistory(Base):
+    """用户浏览历史表。
+
+    这张表记录的是“用户看过什么新闻、什么时候看的”。
+
+    这里使用唯一约束 `(user_id, news_id)` 的原因是：
+    - 可以避免同一篇新闻被重复插入多条历史记录。
+    - 如果业务想表达“再次浏览”，更适合更新 `view_time`，而不是无限新增重复行。
+    """
+
     __tablename__ = "history"
 
-    # 索引与约束：
-    # - UniqueConstraint(user_id, news_id)：保证同一用户同一篇文章只有一条历史记录，便于去重或更新时间。
-    # - 为 news_id、user_id、view_time 创建索引用于高频查询（例如列出用户历史、热门文章的浏览时间分布）。
     __table_args__ = (
-        UniqueConstraint('user_id', 'news_id', name='user_news_unique'),
-        Index('fk_history_news_idx', 'news_id'),
-        Index('idx_history_user_id', 'user_id'),
-        Index('idx_history_view_time', 'view_time')
+        UniqueConstraint("user_id", "news_id", name="user_news_unique"),
+        Index("fk_history_news_idx", "news_id"),
+        Index("idx_history_user_id", "user_id"),
+        Index("idx_history_view_time", "view_time"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="历史ID")
@@ -34,6 +38,6 @@ class ViewHistory(Base):
     view_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, nullable=False, comment="浏览时间")
 
     def __repr__(self):
+        """返回便于调试的模型字符串。"""
+
         return generate_repr(self)
-
-

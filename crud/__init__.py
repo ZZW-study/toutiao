@@ -1,24 +1,22 @@
 # -*- coding: utf-8 -*-
 """CRUD 数据访问层统一导出。
 
-本模块统一导出所有 CRUD 操作模块。
+这里不再导出不存在的函数名，而是直接导出各个 CRUD 模块对象。
+
+这样做有两个好处：
+1. `from crud import users/news/...` 的写法能稳定工作。
+2. 不会因为 `__init__.py` 中误写了一个不存在的方法名，导致整个包导入失败。
+
+项目中的路由层目前主要就是按“导入模块，再调用模块内函数”的方式使用 CRUD，
+所以导出模块对象是最稳妥、最贴合现状的做法。
 """
 
-from crud.users import get_user_by_username, create_user, get_user_by_id
-from crud.news import get_news_list, get_news_detail, get_categories
-from crud.favorite import add_favorite, remove_favorite, get_favorite_list
-from crud.history import add_view_history, get_view_history_list
+from . import favorite, history, news, news_spider, users
 
 __all__ = [
-    "get_user_by_username",
-    "create_user",
-    "get_user_by_id",
-    "get_news_list",
-    "get_news_detail",
-    "get_categories",
-    "add_favorite",
-    "remove_favorite",
-    "get_favorite_list",
-    "add_view_history",
-    "get_view_history_list",
+    "users",
+    "news",
+    "favorite",
+    "history",
+    "news_spider",
 ]

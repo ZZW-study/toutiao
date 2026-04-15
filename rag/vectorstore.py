@@ -1,271 +1,238 @@
 # -*- coding: utf-8 -*-
-"""
-向量存储模块
+"""向量库服务。"""
 
-该模块负责管理和操作 Chroma 向量数据库。
-Chroma 是一个轻量级的向量数据库，适合中小规模的 RAG 应用。
-
-功能：
-1. 初始化向量数据库（如果不存在则创建）
-2. 添加新闻向量（带元数据）
-3. 相似度检索（返回最相关的文档）
-
-向量数据库结构：
-- 每条记录包含：向量、文本内容、元数据（新闻 ID、标题、类别等）
-- 使用余弦相似度进行检索
-"""
+from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, List
-# Chroma数据库，轻量级：作为 Python 库直接使用，无需独立服务
-from langchain_community.vectorstores import Chroma
-from langchain_core.documents import Document
+from threading import Lock
+from typing import Any, Optional
 
-from rag.embeddings import get_embeddings
+from langchain_core.documents import Document
+from starlette.concurrency import run_in_threadpool
+
+try:
+    from langchain_chroma import Chroma
+except ImportError:  # pragma: no cover - 兼容旧依赖组合
+    from langchain_community.vectorstores import Chroma
+
+from rag.embeddings import get_embedding_service
 from utils.logger import get_logger
 
-# 获取日志记录器
 logger = get_logger(name="VectorStore")
 
-
-# ========== 全局变量 ==========
-# 缓存向量存储实例，避免重复初始化
-_vectorstore_instance: Optional[Chroma] = None
-
-
-# ========== 配置 ==========
-# 向量数据库持久化目录
-CHROMA_PERSIST_DIR = Path(__file__).parent.parent / "data" / "chroma"
-
-# 集合名称（Chroma 中类似"表"的概念）
+CHROMA_PERSIST_DIR = str(Path(__file__).parent.parent / "data" / "chroma")
 COLLECTION_NAME = "news_collection"
 
 
-def get_vectorstore() -> Chroma:
+def _normalize_category_id(category_id: Any) -> str:
+    """统一 metadata 中 `category_id` 的类型。
+
+    Chroma 过滤条件对类型比较敏感，因此这里统一写入字符串，读取时也按字符串过滤。
     """
-    获取向量存储实例（单例模式）
 
-    该函数返回一个全局共享的 Chroma 向量存储实例。
-    首次调用时会初始化向量数据库，后续调用直接返回缓存的实例。
+    return str(category_id) if category_id is not None else "0"
 
-    如果持久化目录不存在，会自动创建新的数据库。
-    如果持久化目录已存在，会加载已有的向量数据。
 
-    返回:
-        Chroma 向量存储实例
-    """
-    global _vectorstore_instance
+class VectorStoreService:
+    """统一管理 Chroma 生命周期与操作。"""
 
-    # 如果已经初始化过，直接返回缓存的实例
-    if _vectorstore_instance is not None:
-        return _vectorstore_instance
+    def __init__(self) -> None:
+        """初始化向量库服务的懒加载状态。"""
+        self._vectorstore: Optional[Chroma] = None
+        self._lock = Lock()
 
-    logger.info(f"初始化向量存储，持久化目录: {CHROMA_PERSIST_DIR}")
-
-    try:
-        # 确保持久化目录存在
-        Path.mkdir(CHROMA_PERSIST_DIR,parents=True,exist_ok=True)
-
-        # 获取 Embedding 模型
-        embeddings = get_embeddings()
-
-        # ========== 初始化 Chroma 向量存储 ==========
-        # persist_directory: 数据持久化目录
-        # embedding_function: 用于将文本转换为向量的函数
-        # collection_name: 集合名称
-        _vectorstore_instance = Chroma(
+    def _build_sync(self) -> Chroma:
+        """同步创建 Chroma 向量库实例。"""
+        Path(CHROMA_PERSIST_DIR).mkdir(parents=True, exist_ok=True)
+        embeddings = get_embedding_service().get_embeddings()
+        logger.info("初始化 Chroma 向量库", persist_directory=CHROMA_PERSIST_DIR)
+        return Chroma(
             persist_directory=CHROMA_PERSIST_DIR,
             embedding_function=embeddings,
-            collection_name=COLLECTION_NAME
+            collection_name=COLLECTION_NAME,
         )
 
-        # 检查已有数据量
-        count = _vectorstore_instance._collection.count()
-        logger.info(f"向量存储初始化完成，已有 {count} 条向量")
+    def get_vectorstore(self) -> Chroma:
+        """同步获取向量库实例。"""
 
-    except Exception as e:
-        logger.error(f"初始化向量存储失败: {e}")
-        raise
+        if self._vectorstore is not None:
+            return self._vectorstore
 
-    return _vectorstore_instance
+        with self._lock:
+            if self._vectorstore is None:
+                self._vectorstore = self._build_sync()
+        return self._vectorstore
 
+    async def ensure_ready(self) -> Chroma:
+        """异步预热向量库。"""
 
-def add_news_to_vectorstore(
-    news_list: List[dict]
-) -> int:
-    """
-    批量添加新闻到向量存储
+        if self._vectorstore is not None:
+            return self._vectorstore
+        await run_in_threadpool(self.get_vectorstore)
+        return self.get_vectorstore()
 
-    将新闻列表转换为向量并存储到 Chroma。
-    每条新闻会被转换为一个 Document 对象，包含：
-    - page_content: 用于向量化的文本（标题 + 内容）
-    - metadata: 元数据（新闻 ID、标题、类别 ID 等）
+    def add_news(self, news_list: list[dict[str, Any]]) -> int:
+        """批量写入新闻向量。"""
 
-    参数:
-        news_list: 新闻列表，每条新闻是一个字典，包含以下字段：
-            - id: 新闻 ID（必需）
-            - title: 新闻标题（必需）
-            - content: 新闻内容（必需）
-            - category_id: 类别 ID（可选）
+        if not news_list:
+            return 0
 
-    返回:
-        成功添加的新闻数量
-    """
-    if not news_list:
-        logger.warning("新闻列表为空，跳过添加")
-        return 0
-
-    logger.info(f"开始添加 {len(news_list)} 条新闻到向量存储")
-
-    try:
-        vectorstore = get_vectorstore()
-
-        # ========== 构建文档列表 ==========
-        texts = []
-        metadatas = []
+        vectorstore = self.get_vectorstore()
+        texts: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        ids: list[str] = []
 
         for news in news_list:
-            # 跳过关键字段缺失的新闻
-            if not news.get("id") or not news.get("title"):
-                logger.warning(f"新闻缺少必要字段，跳过: {news}")
+            news_id = news.get("id")
+            title = news.get("title")
+            if not news_id or not title:
+                logger.warning("跳过缺少关键字段的新闻", news=news)
                 continue
 
-            # 构建用于向量化的文本
-            # 同样权重的标题和内容（内容取前 1000 字符）
-            title = news["title"]
-            content = news.get("content", "")[:1000]
-            text = f"标题：{title}\n内容：{content}"
+            content = (news.get("content") or "")[:1000]
+            texts.append(f"标题：{title}\n内容：{content}")
+            ids.append(str(news_id))
+            metadatas.append(
+                {
+                    "news_id": str(news_id),
+                    "title": title,
+                    "category_id": _normalize_category_id(news.get("category_id")),
+                }
+            )
 
-            texts.append(text)
+        if not texts:
+            return 0
 
-            # 构建元数据
-            metadata = {
-                "news_id": news["id"],
-                "title": title,
-                "category_id": news.get("category_id","0")
-            }
-            metadatas.append(metadata)
+        # 通过显式 id 覆盖旧文档，避免重复构建索引时产生多份脏数据。
+        try:
+            vectorstore.delete(ids=ids)
+        except Exception:
+            logger.debug("删除旧向量失败，继续尝试新增", ids=ids, exc_info=True)
 
-        # ========== 批量添加到向量存储 ==========
-        if texts:
-            vectorstore.add_texts(texts=texts, metadatas=metadatas)
-            logger.info(f"成功添加 {len(texts)} 条新闻到向量存储")
-
+        vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
         return len(texts)
 
-    except Exception as e:
-        logger.error(f"添加新闻到向量存储失败: {e}")
-        return 0
+    async def asearch(
+        self,
+        query: str,
+        top_k: int = 5,
+        category_id: Optional[int | str] = None,
+    ) -> list[Document]:
+        """异步向量检索。
+
+        同步的 Chroma 检索会走线程池，避免阻塞 async 接口。
+        """
+
+        await self.ensure_ready()
+        return await run_in_threadpool(self.search, query, top_k, category_id)
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        category_id: Optional[int | str] = None,
+    ) -> list[Document]:
+        """同步向量检索。"""
+
+        vectorstore = self.get_vectorstore()
+        filter_dict = None
+        if category_id is not None:
+            filter_dict = {"category_id": _normalize_category_id(category_id)}
+        return vectorstore.similarity_search(query=query, k=top_k, filter=filter_dict)
+
+    def delete_news(self, news_ids: list[int]) -> int:
+        """按新闻 ID 删除向量。"""
+
+        if not news_ids:
+            return 0
+
+        ids = [str(news_id) for news_id in news_ids]
+        vectorstore = self.get_vectorstore()
+        existing = vectorstore.get(ids=ids, include=[])
+        existing_ids = existing.get("ids", []) if isinstance(existing, dict) else []
+        if not existing_ids:
+            return 0
+
+        vectorstore.delete(ids=list(existing_ids))
+        return len(existing_ids)
+
+    def count(self) -> int:
+        """返回向量总数。
+
+        这里使用公开的 `get()` 接口而不是私有 `_collection`。
+        """
+
+        vectorstore = self.get_vectorstore()
+        data = vectorstore.get(include=[])
+        ids = data.get("ids", []) if isinstance(data, dict) else []
+        return len(ids)
+
+    def stats(self) -> dict[str, Any]:
+        """返回当前向量库的基础统计信息。"""
+        return {
+            "total_vectors": self.count(),
+            "persist_directory": CHROMA_PERSIST_DIR,
+        }
+
+    def reset(self) -> None:
+        """清理内存中的向量库实例。
+
+        这个方法主要给重建索引或测试场景使用。
+        """
+
+        with self._lock:
+            self._vectorstore = None
+
+
+_vectorstore_service: Optional[VectorStoreService] = None
+
+
+def get_vectorstore_service() -> VectorStoreService:
+    """返回向量库服务的全局单例。"""
+    global _vectorstore_service
+    if _vectorstore_service is None:
+        _vectorstore_service = VectorStoreService()
+    return _vectorstore_service
+
+
+def get_vectorstore() -> Chroma:
+    """兼容旧接口。"""
+
+    return get_vectorstore_service().get_vectorstore()
+
+
+async def preload_vectorstore() -> Chroma:
+    """启动期可选预热。"""
+
+    return await get_vectorstore_service().ensure_ready()
+
+
+def add_news_to_vectorstore(news_list: list[dict[str, Any]]) -> int:
+    """兼容旧接口，批量把新闻写入向量库。"""
+    return get_vectorstore_service().add_news(news_list)
 
 
 def search_similar_news(
     query: str,
     top_k: int = 5,
-    category_id: Optional[int] = None
-) -> List[Document]:
-    """
-    搜索相似新闻
-
-    根据查询文本，在向量存储中检索语义相似度最高的新闻。
-
-    参数:
-        query: 查询文本
-        top_k: 返回的最大结果数量
-        category_id: 类别过滤条件（可选），只返回该类别的新闻
-
-    返回:
-        Document 列表，每个 Document 包含：
-        - page_content: 新闻文本
-        - metadata: 元数据（news_id、title、category_id）
-    """
-    logger.debug(f"搜索相似新闻 - 查询: '{query}', top_k: {top_k}")
-
-    try:
-        vectorstore = get_vectorstore()
-
-        # 构建过滤条件
-        filter_dict = None
-        if category_id is not None:
-            filter_dict = {"category_id": category_id}
-
-        # 执行相似度检索
-        results = vectorstore.similarity_search(
-            query=query,
-            k=top_k,
-            filter=filter_dict
-        )
-
-        logger.debug(f"检索到 {len(results)} 条结果")
-        return results
-
-    except Exception as e:
-        logger.error(f"搜索相似新闻失败: {e}")
-        return []
+    category_id: Optional[int] = None,
+) -> list[Document]:
+    """兼容旧接口，根据查询语句检索相似新闻。"""
+    return get_vectorstore_service().search(query=query, top_k=top_k, category_id=category_id)
 
 
-def delete_news_from_vectorstore(news_ids: List[int]) -> int:
-    """
-    从向量存储中删除新闻
-
-    注意：Chroma 的删除操作是按 ID 删除，但这里的 ID 是文档的内部 ID，
-    不是我们存储的 news_id。因此需要先查询再删除。
-
-    参数:
-        news_ids: 要删除的新闻 ID 列表
-
-    返回:
-        删除的文档数量
-    """
-    logger.info(f"尝试从向量存储删除 {len(news_ids)} 条新闻")
-
-    try:
-        vectorstore = get_vectorstore()
-        collection = vectorstore._collection
-
-        deleted_count = 0
-
-        # Chroma 需要根据 metadata 查找并删除
-        for news_id in news_ids:
-            # 查询该 news_id 对应的文档
-            results = collection.get(
-                where={"news_id": news_id}
-            )
-
-            if results and results["ids"]:
-                # 删除找到的文档
-                collection.delete(ids=results["ids"])
-                deleted_count += len(results["ids"])
-
-        logger.info(f"成功删除 {deleted_count} 条向量")
-
-        return deleted_count
-
-    except Exception as e:
-        logger.error(f"删除新闻失败: {e}")
-        return 0
+def delete_news_from_vectorstore(news_ids: list[int]) -> int:
+    """兼容旧接口，按新闻 ID 删除向量。"""
+    return get_vectorstore_service().delete_news(news_ids)
 
 
-def get_vectorstore_stats() -> dict:
-    """
-    获取向量存储统计信息
+def get_vectorstore_stats() -> dict[str, Any]:
+    """兼容旧接口，返回向量库统计信息。"""
+    return get_vectorstore_service().stats()
 
-    返回:
-        统计信息字典，包含：
-        - total_vectors: 向量总数
-        - persist_directory: 持久化目录路径
-    """
-    try:
-        vectorstore = get_vectorstore()
-        count = vectorstore._collection.count()
 
-        return {
-            "total_vectors": count,
-            "persist_directory": CHROMA_PERSIST_DIR
-        }
+def reset_vectorstore_service() -> None:
+    """重置全局单例，供重建索引时使用。"""
 
-    except Exception as e:
-        logger.error(f"获取统计信息失败: {e}")
-        return {
-            "total_vectors": 0,
-            "persist_directory": CHROMA_PERSIST_DIR
-        }
+    service = get_vectorstore_service()
+    service.reset()

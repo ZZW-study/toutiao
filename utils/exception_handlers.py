@@ -1,23 +1,32 @@
-# 1. 异常处理器注册函数 (utils/exception_handlers.py)
-# ------------------------------
+"""异常处理器注册入口。
+
+把注册逻辑单独抽出来的好处是：
+- `main.py` 会更干净，只负责调用。
+- 如果以后要新增自定义异常类型，只需要改这里。
+"""
+
+from __future__ import annotations
+
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
 from utils.exception import (
+    general_exception_handler,
     http_exception_handler,
     integrity_error_handler,
     sqlalchemy_error_handler,
-    general_exception_handler,
 )
 
+
 def register_exception_handlers(app):
+    """把所有全局异常处理器挂到 FastAPI 应用上。
+
+    注册顺序遵循一个原则：
+    越具体的异常放越前面，越宽泛的异常放越后面。
+    否则父类异常会先匹配，把子类异常提前“吃掉”。
     """
-    注册全局异常处理：子类在前，父类在后
-    """
-    # 业务逻辑异常
+
     app.add_exception_handler(HTTPException, http_exception_handler)
-    # 数据库完整性约束错误
     app.add_exception_handler(IntegrityError, integrity_error_handler)
-    # 数据库操作错误
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_error_handler)
-    # 兜底：捕获所有未处理的异常
     app.add_exception_handler(Exception, general_exception_handler)

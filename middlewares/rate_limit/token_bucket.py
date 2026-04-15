@@ -31,6 +31,7 @@ class LocalTokenBucket:
     _max_instances: int = 10000  # 最大实例数，防止内存泄漏
 
     def __init__(self, capacity: int = None, rate: float = None):
+        """初始化本地令牌桶的容量、速率和并发保护锁。"""
         self.capacity = capacity or RateLimitConfig.capacity
         self.rate = rate or RateLimitConfig.rate
         self.tokens = float(self.capacity)

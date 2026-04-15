@@ -13,6 +13,7 @@
 from middlewares.rate_limit.config import (
     RateLimitDimension,
     RateLimitConfig,
+    RateLimitIdentity,
     RateLimitResult,
 )
 from middlewares.rate_limit.token_bucket import LocalTokenBucket
@@ -28,6 +29,7 @@ __all__ = [
     # 配置类
     "RateLimitDimension",
     "RateLimitConfig",
+    "RateLimitIdentity",
     "RateLimitResult",
     # 本地令牌桶
     "LocalTokenBucket",

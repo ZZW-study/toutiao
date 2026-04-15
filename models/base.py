@@ -1,48 +1,46 @@
-from datetime import datetime
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import DateTime
+"""SQLAlchemy 模型公共基类。
 
+这个文件定义了两个最基础的能力：
+1. `Base`：所有 ORM 模型的共同父类。
+2. `TimestampMixin`：给需要记录创建时间、更新时间的表复用时间字段。
 
-"""统一的 ORM 基类定义。
-
-本文件提供 SQLAlchemy 2.0 风格的 DeclarativeBase 基类，
-所有数据库模型都应继承此基类以确保元数据统一管理。
+把公共能力抽到这里，可以避免每个模型都重复写相同字段。
 """
 
+from __future__ import annotations
 
-# 统一的 ORM 基类
-# 所有数据库模型都应继承此类，确保 SQLAlchemy 元数据统一管理
+from datetime import datetime
+
+from sqlalchemy import DateTime
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
 class Base(DeclarativeBase):
-    """统一的 ORM 基类。
+    """项目统一的 ORM 基类。
 
-    所有数据库模型都应继承此类。
-    使用 SQLAlchemy 2.0 的 DeclarativeBase 风格。
+    所有数据表模型都应该继承它，这样 SQLAlchemy 才能把它们收集到同一份元数据里，
+    后续建表、删表、迁移时才知道项目一共有哪些表。
     """
+
     pass
 
 
-# 时间戳混入类
-# 提供统一的 created_at 和 updated_at 字段，需要时间戳的模型可继承此类
 class TimestampMixin:
     """时间戳混入类。
 
-    为模型提供统一的创建时间和更新时间字段。
-    - created_at: 记录创建时间，默认为当前时间
-    - updated_at: 记录更新时间，创建时默认为当前时间，每次更新时自动更新
-
-    使用方式：
-        class MyModel(Base, TimestampMixin):
-            __tablename__ = "my_table"
-            # ... 其他字段
+    “Mixin” 可以理解成“可插拔的公共字段包”。
+    哪个模型想要 `created_at` 和 `updated_at`，
+    只要继承这个类就能直接获得，不需要重复定义。
     """
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.now,
-        comment="创建时间"
+        comment="创建时间",
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.now,
         onupdate=datetime.now,
-        comment="更新时间"
+        comment="更新时间",
     )

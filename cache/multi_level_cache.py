@@ -1,168 +1,167 @@
+"""多级缓存协调器。
+
+职责边界：
+- L1：本地进程内热点缓存，追求极低延迟。
+- L2：Redis 共享缓存，承担跨进程复用。
+- DB：最终数据源。
+
+这次重写把之前“运行时再动态套装饰器”的写法改成了固定包装流程，
+这样逻辑更直观，也更容易调试和测试。
 """
-多级缓存协调器（L1本地+L2Redis+DB兜底）
-核心职责：
-1. 标准读取链路：本地缓存(L1) → Redis缓存(L2) → 数据库(DB)
-2. 自动回写机制：Redis/DB命中后异步回写本地缓存，极致提升后续查询性能
-3. 全链路防护：缓存穿透(空值缓存)、雪崩(随机TTL)、击穿(SingleFlight+分布式锁+双检锁)
-4. 数据一致性保障：统一写入/删除/刷新两级缓存，保证数据最终一致
-5. 高可用降级：Redis异常自动降级，不阻塞主业务流程
-"""
-import asyncio
-from typing import Any,Optional,TypeVar,Callable,Coroutine
+
+from __future__ import annotations
+
 from functools import wraps
 from threading import RLock
+from typing import Any, Callable, Coroutine, Optional, TypeVar
 
-from utils.logger import get_logger
 from cache.local_cache import local_cache
+from cache.redis_cache import CacheUtil, cache, generate_cache_key, logic_cache
+from utils.logger import get_logger
 from utils.singleflight import singleflight
-from cache.redis_cache import generate_cache_key,logic_cache,cache,CacheUtil
 
-# 空值缓存过期时间（秒），用于防止缓存穿透
-NULL_CACHE_EXPIRE_SECONDS = 300  # 5分钟
+NULL_CACHE_EXPIRE_SECONDS = 300
 
 T = TypeVar("T")
 logger = get_logger(name="MultiLevelCache")
 
-class MutiLevelCache:
-    """
-    多级缓存调度核心类
-    【层级说明】
-    1. L1 = local_cache  ：内存级缓存，最低延迟，90%读请求命中
-    2. L2 = redis_cache  ：分布式缓存，跨实例共享，大容量
-    3. DB  ：数据库，最终数据兜底
-    """
-    _instance_lock: RLock = RLock()
-    _instance: Optional["MutiLevelCache"] = None
 
-    def __new__(cls,*args,**kwargs) ->"MutiLevelCache":
-        """
-        线程安全单例模式
-        作用：保证全局只有一个多级缓存实例，避免资源重复创建
-        """
+class MultiLevelCache:
+    """多级缓存核心协调类。"""
+
+    _instance_lock: RLock = RLock()
+    _instance: Optional["MultiLevelCache"] = None
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "MultiLevelCache":
+        """使用单例模式，保证进程内只维护一套多级缓存协调器。"""
         with cls._instance_lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
-                # 只在首次创建时设置属性，避免每次调用都重新赋值
                 cls._instance.l1 = local_cache
                 cls._instance.l2 = CacheUtil
-
         return cls._instance
 
-
     async def get(
-            self,
-            key: str,
-            db_func: Optional[Callable[...,Coroutine[Any,Any,T]]] = None, 
-# 第一个 ...：表示这个函数接收任意数量、任意类型的参数
-# 第二个是返回值类型
-# Coroutine[Any,Any,T]：异步协程类型（async def 函数的返回值）
-# Any,Any：协程的发送值、异常类型都不限制
-# T：泛型，代表协程最终返回的值类型（任意类型，由调用时决定）
-            *db_args,
-            **db_kwargs
-) ->Optional["T"]:
-        """
-        多级缓存读取入口
-        流程：L1 → L2 → DB → 异步回写两级缓存
-        :param key: 缓存唯一键
-        :param db_func: 缓存未命中时，执行的数据库查询异步函数
-        :param db_args: 数据库函数位置参数
-        :param db_kwargs: 数据库函数关键字参数
-        """
-        local_value = self.l1.get(key)
-        if local_value is not None:
-            logger.debug(f"[多级缓存] L1本地缓存命中 | key={key}")
-            return local_value
+        self,
+        key: str,
+        db_func: Optional[Callable[..., Coroutine[Any, Any, T]]] = None,
+        *db_args: Any,
+        **db_kwargs: Any,
+    ) -> Optional[T]:
+        """统一读取入口。
 
-        try:
-            redis_value = await self.l2.get(key)
-            if redis_value is not None:
-                logger.debug(f"[多级缓存] L2 Redis缓存命中 | key={key}")
-            # 异步回写L1：不阻塞当前请求，提升后续查询性能    
-            asyncio.create_task(self.l1.set(key,redis_value))
-            return redis_value
-        
-        except Exception as e:
-            # Redis异常自动降级：不影响主业务，直接查询数据库
-            logger.warning(f"[多级缓存] Redis异常，自动降级查询DB | key={key}, err={str(e)}")
+        读取顺序固定为 `L1 -> L2 -> DB`。
+        这里用 `get_entry()` 来区分“未命中”和“负缓存命中”。
+        """
 
-         # ====================== 第三步：缓存未命中，查询数据库 ======================
-        # 无数据库查询函数，直接返回None
-        if not db_func:
-            logger.debug(f"[多级缓存] 无DB查询函数，返回空 | key={key}")
+        local_entry = self.l1.get_entry(key)
+        if local_entry.hit:
+            return local_entry.value
+
+        redis_entry = await self.l2.get_entry(key)
+        if redis_entry.hit:
+            # Redis 命中后同步回填本地缓存，后续请求直接走 L1。
+            self.l1.set(
+                key,
+                redis_entry.value,
+                ttl=NULL_CACHE_EXPIRE_SECONDS if redis_entry.value is None else None,
+            )
+            return redis_entry.value
+
+        if db_func is None:
             return None
 
-        # ====================== SingleFlight：合并并发请求，防缓存击穿 ======================
-        # 相同key的并发请求，只执行一次DB查询
-        db_value = await singleflight.do(key=key,func=lambda:db_func(*db_args,**db_kwargs))
+        async def load_and_fill() -> Optional[T]:
+            # SingleFlight 内再做一次双检，避免并发回源时重复查询 DB。
+            """在两级缓存都未命中时回源数据库，并把结果回填到缓存中。"""
+            second_local = self.l1.get_entry(key)
+            if second_local.hit:
+                return second_local.value
 
-        # ====================== 第四步：DB查询成功，异步回写两级缓存 ======================
-        if db_value is not None:
-            logger.debug(f"[多级缓存] DB查询成功，异步回写缓存 | key={key}")
-            asyncio.create_task(self.l2.set(key,db_value))
-            self.l1.set(key,db_value)
-        else:
-            # db无数据，则缓存空值，防止缓存穿透
-            logger.debug(f"[多级缓存] DB无数据，写入空值防穿透 | key={key}")
-            asyncio.create_task(self.l2.set(key, None, ex=NULL_CACHE_EXPIRE_SECONDS))
+            second_redis = await self.l2.get_entry(key)
+            if second_redis.hit:
+                self.l1.set(
+                    key,
+                    second_redis.value,
+                    ttl=NULL_CACHE_EXPIRE_SECONDS if second_redis.value is None else None,
+                )
+                return second_redis.value
 
-        return db_value
-    
-    async def delete(self,key: str) ->None:
-        """
-        统一删除两级缓存
-        作用：数据更新/删除时调用，保证多级缓存数据一致性
-        策略：先删Redis → 再删本地缓存（避免脏数据）
-        """
+            db_value = await db_func(*db_args, **db_kwargs)
+            if db_value is None:
+                await self.l2.set(key, None, ex=NULL_CACHE_EXPIRE_SECONDS)
+                self.l1.set(key, None, ttl=NULL_CACHE_EXPIRE_SECONDS)
+                return None
+
+            await self.l2.set(key, db_value)
+            self.l1.set(key, db_value)
+            return db_value
+
+        return await singleflight.do(f"multi-cache:{key}", load_and_fill)
+
+    async def delete(self, key: str) -> None:
+        """统一删除两级缓存。"""
+
         await self.l2.delete(key)
         self.l1.delete(key)
-        logger.info(f"[多级缓存] 两级缓存删除成功 | key={key}")
 
-    async def refresh(self,key: str,value: Any,ttl: Optional[int] = None) ->None:
-        """
-        主动刷新两级缓存
-        作用：热点数据预热、数据更新后主动推送新值
-        逻辑：先删除旧缓存 → 再写入新缓存
-        """
-        await self.delete(key)
-        await self.l2.set(key,value,ex=ttl)
-        self.l1.set(key,value,ttl)
-        logger.info(f"[多级缓存] 两级缓存刷新完成 | key={key}")
+    async def refresh(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """主动刷新两级缓存。"""
 
-multi_level_cache = MutiLevelCache()  # 全局单例实例
+        await self.l2.set(key, value, ex=ttl)
+        self.l1.set(
+            key,
+            value,
+            ttl=NULL_CACHE_EXPIRE_SECONDS if value is None else ttl,
+        )
 
 
-# ====================== 业务便捷装饰器（无感知接入多级缓存） ======================
-def multi_cache(key_prefix: str,expire: int = 3600,hot: bool = False):
+multi_level_cache = MultiLevelCache()
+
+
+def multi_cache(
+    key_prefix: str,
+    expire: int = 3600,
+    hot: bool = False,
+) -> Callable[[Callable[..., Coroutine[Any, Any, T]]], Callable[..., Coroutine[Any, Any, Optional[T]]]]:
+    """业务层便捷装饰器。
+
+    `hot=True` 时使用 stale-while-revalidate。
+    `hot=False` 时使用标准读穿缓存。
     """
-    多级缓存装饰器
-    :param key_prefix: 缓存前缀
-    :param expire: 过期时间
-    :param hot: 是否热点数据 → True=逻辑过期缓存，False=通用缓存
-    """
-    def decorator(func: Callable[...,Coroutine[Any,Any,T]]):
+
+    redis_decorator = logic_cache(key_prefix=key_prefix, expire_seconds=expire) if hot else cache(
+        key_prefix=key_prefix,
+        expire=expire,
+    )
+
+    def decorator(
+        func: Callable[..., Coroutine[Any, Any, T]]
+    ) -> Callable[..., Coroutine[Any, Any, Optional[T]]]:
+        """接收业务函数并返回带多级缓存能力的增强函数。"""
+        redis_wrapped = redis_decorator(func)
+
         @wraps(func)
-        async def wrapper(*args:Any,**kwargs:Any) ->Optional[T]:
+        async def wrapper(*args: Any, **kwargs: Any) -> Optional[T]:
+            """先查本地缓存，再执行 Redis 层包装后的读取逻辑。"""
             cache_key = generate_cache_key(key_prefix, args, kwargs)
-            local_val = multi_level_cache.l1.get(cache_key)
-            if local_val is not None:
-                return local_val
 
-            if hot:
-                @logic_cache(key_prefix=key_prefix, expire_seconds=expire)
-                async def _wrapped():
-                    return await func(*args, **kwargs)
-                result = await _wrapped()
-            else:
-                @cache(key_prefix=key_prefix, expire=expire)
-                async def _wrapped():
-                    return await func(*args, **kwargs)
-                result = await _wrapped()
+            local_entry = multi_level_cache.l1.get_entry(cache_key)
+            if local_entry.hit:
+                return local_entry.value
 
-            if result is not None:
-                multi_level_cache.l1.set(cache_key, result)
+            result = await redis_wrapped(*args, **kwargs)
+            multi_level_cache.l1.set(
+                cache_key,
+                result,
+                ttl=NULL_CACHE_EXPIRE_SECONDS if result is None else expire,
+            )
             return result
+
         return wrapper
+
     return decorator
 
 
+# 兼容旧拼写，避免现有导入立刻失效。
+MutiLevelCache = MultiLevelCache

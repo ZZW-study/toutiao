@@ -1,326 +1,459 @@
+"""Redis 缓存封装。
+
+重写后的实现遵循两个原则：
+
+1. 缓存层只处理“明确可序列化”的数据，不再偷偷把复杂对象 `default=str`。
+2. 缓存 key 必须稳定、可推导，不能因为忽略复杂参数而产生错误复用。
 """
-Redis 分布式缓存封装
-职责：作为二级缓存，与 LocalLRUCache 配对
-"""
-import json
+
+from __future__ import annotations
+
 import asyncio
-import random
-import uuid
 import hashlib
-import redis.asyncio as redis
-from typing import Any, Callable, TypeVar, Optional, Coroutine, Dict
+import json
+import random
+import time
+from dataclasses import asdict, dataclass, is_dataclass
+from datetime import date, datetime
+from enum import Enum
 from functools import wraps
-from datetime import datetime
-from threading import RLock
+from typing import Any, Callable, Coroutine, Iterable, Optional, TypeVar
+from uuid import UUID
 
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
+from starlette.responses import Response
 
-from utils.logger import get_logger
-from configs.redis_conf import redis_client, UNLOCK_SCRIPT,RedisConfig
 from cache.constants import EMPTY_CACHE_FLAG
+from configs.redis_conf import RedisConfig, redis_client
+from utils.logger import get_logger
+from utils.singleflight import singleflight
 
 logger = get_logger(name="RedisCache")
 T = TypeVar("T")
-# ====================== 缓存基础工具类 ======================
+
+_IGNORED_KEYWORD_NAMES = {"db", "session", "request", "response"}
+_IGNORED_ARG_TYPES = (AsyncSession, Request, Response)
+
+
+@dataclass(slots=True)
+class CacheReadResult:
+    """Redis 读取结果。
+
+    `hit=True` 时，即使 value 为 `None`，也表示命中了负缓存。
+    """
+
+    hit: bool
+    value: Any = None
+
+
+def _looks_like_empty(value: Any) -> bool:
+    """判断返回值是否应当写成负缓存。"""
+
+    return value is None or (isinstance(value, (list, dict, set, tuple)) and not value)
+
+
+def _normalize_cache_value(value: Any) -> Any:
+    """把业务值转换成稳定的 JSON 值。
+
+    这里只接受“可以明确恢复语义”的数据类型。
+    如果传入 ORM 或其他复杂对象，会主动报错，让业务层显式决定怎么缓存。
+    """
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, Enum):
+        return _normalize_cache_value(value.value)
+
+    if isinstance(value, BaseModel):
+        return _normalize_cache_value(value.model_dump(mode="json"))
+
+    if is_dataclass(value):
+        return _normalize_cache_value(asdict(value))
+
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_cache_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_cache_value(item) for item in value]
+
+    raise TypeError(
+        f"缓存层不支持直接序列化 {type(value)!r}，"
+        "请先在业务层转换成 dict/list/基础类型。"
+    )
+
+
+def _normalize_key_component(value: Any) -> Any:
+    """把函数参数转换成稳定的 key 片段。"""
+
+    if isinstance(value, _IGNORED_ARG_TYPES):
+        return None
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, Enum):
+        return _normalize_key_component(value.value)
+
+    if isinstance(value, BaseModel):
+        return _normalize_key_component(value.model_dump(mode="json", exclude_none=True))
+
+    if is_dataclass(value):
+        return _normalize_key_component(asdict(value))
+
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_key_component(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if str(key) not in _IGNORED_KEYWORD_NAMES
+        }
+
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_key_component(item) for item in value]
+
+    # 对非标准对象，优先尝试公开字段；如果没有，再回退到稳定类型名。
+    if hasattr(value, "__cache_key__"):
+        return _normalize_key_component(value.__cache_key__())
+
+    public_attrs = {
+        key: _normalize_key_component(item)
+        for key, item in vars(value).items()
+        if not key.startswith("_")
+    } if hasattr(value, "__dict__") else {}
+
+    if public_attrs:
+        return {
+            "__type__": f"{value.__class__.__module__}.{value.__class__.__qualname__}",
+            "attrs": public_attrs,
+        }
+
+    return f"{value.__class__.__module__}.{value.__class__.__qualname__}"
+
+
+def _wrap_standard_payload(value: Any) -> str:
+    """标准缓存值序列化。
+
+    标准 payload 的好处是：
+    - 能明确表示负缓存。
+    - 后续如果扩展版本字段，也不会和旧裸 JSON 混淆。
+    """
+
+    payload = {
+        "version": 1,
+        "empty": value is None,
+        "value": None if value is None else _normalize_cache_value(value),
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _unwrap_standard_payload(raw: str) -> CacheReadResult:
+    """解析 Redis 中的标准缓存值。
+
+    兼容旧格式：
+    - 旧的空值哨兵字符串。
+    - 旧版本直接 `json.dumps(value)` 的裸 JSON。
+    """
+
+    if raw == EMPTY_CACHE_FLAG:
+        return CacheReadResult(hit=True, value=None)
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Redis 缓存值不是合法 JSON，按未命中处理")
+        return CacheReadResult(hit=False, value=None)
+
+    if isinstance(payload, dict) and payload.get("mode") == "stale":
+        # stale-while-revalidate 使用单独的 payload 协议，这里交给 `logic_cache` 自己解析。
+        return CacheReadResult(hit=False, value=None)
+
+    if isinstance(payload, dict) and payload.get("version") == 1 and "empty" in payload:
+        return CacheReadResult(hit=True, value=None if payload["empty"] else payload.get("value"))
+
+    # 兼容历史裸 JSON 数据，读取后直接作为有效缓存值返回。
+    return CacheReadResult(hit=True, value=payload)
+
+
 class CacheUtil:
-    """静态缓存工具类：封装Redis所有基础操作，统一异常处理、序列化、空值处理"""
-    # 空值缓存唯一标识：避免与业务数据冲突
+    """Redis 缓存基础工具。"""
+
     EMPTY_CACHE_FLAG = EMPTY_CACHE_FLAG
 
     @staticmethod
     async def get(key: str) -> Optional[str]:
-        """
-        获取字符串缓存
-        :param key: 缓存键
-        :return: 缓存值 / None（异常/无数据）
-        """
+        """从 Redis 读取原始缓存值。"""
         try:
             return await redis_client.get(key)
-        except Exception as e:
-            logger.error(f"[CacheUtil] 获取缓存失败 | key={key}", exc_info=True)
+        except Exception:
+            logger.warning("Redis 读取失败，降级为未命中", key=key, exc_info=True)
             return None
+
+    @staticmethod
+    async def get_entry(key: str) -> CacheReadResult:
+        """读取并解析标准缓存结构，返回带命中状态的结果。"""
+        raw = await CacheUtil.get(key)
+        if raw is None:
+            return CacheReadResult(hit=False, value=None)
+        return _unwrap_standard_payload(raw)
 
     @staticmethod
     async def get_json(key: str) -> Optional[Any]:
-        """
-        获取JSON缓存：自动反序列化，兼容空值、异常
-        修复：统一数据类型，int/bool/dict 取出类型不变
-        """
-        data = await CacheUtil.get(key)
-        if not data:
-            return None
-
-        # 命中空值标识，直接返回None
-        if data == CacheUtil.EMPTY_CACHE_FLAG:
-            return None
-
-        try:
-            # 自动反序列化，恢复原始数据类型
-            return json.loads(data)
-        except json.JSONDecodeError as e:
-            logger.error(f"[CacheUtil] JSON反序列化失败 | key={key}", exc_info=True)
-            return None
+        """读取缓存并直接返回解析后的业务值。"""
+        return (await CacheUtil.get_entry(key)).value
 
     @staticmethod
-    async def set(
-        key: str,
-        value: Any,
-        ex: int = 3600,
-        ensure_ascii: bool = False
-    ) -> bool:
-        """
-        设置缓存：**全类型兼容**，统一JSON序列化，空值特殊处理
-        修复：int/bool/str 存入后类型丢失问题
-        """
+    async def set(key: str, value: Any, ex: Optional[int] = 3600) -> bool:
+        """把业务值写入 Redis，并按统一协议完成序列化。"""
         try:
-            # 空值处理：防止缓存穿透
-            if value is None:
-                value = CacheUtil.EMPTY_CACHE_FLAG
+            payload = _wrap_standard_payload(None if value is None else value)
+            if ex is None:
+                await redis_client.set(key, payload)
             else:
-                # 所有数据统一JSON序列化，保证类型一致
-                # default=str：兼容datetime/对象等无法序列化的类型
-                value = json.dumps(value, ensure_ascii=ensure_ascii, default=str)
-
-            # 写入Redis，设置过期时间
-            await redis_client.set(key, value, ex=ex)
+                await redis_client.set(key, payload, ex=max(ex, 1))
             return True
-        except Exception as e:
-            logger.error(f"[CacheUtil] 设置缓存失败 | key={key}", exc_info=True)
+        except TypeError:
+            # 这里明确记录不可缓存的数据类型，让问题暴露在日志里而不是悄悄污染缓存。
+            logger.warning("跳过不支持序列化的缓存值", key=key, exc_info=True)
+            return False
+        except Exception:
+            logger.warning("Redis 写入失败", key=key, exc_info=True)
+            return False
+
+    @staticmethod
+    async def set_raw_json(key: str, payload: dict[str, Any], ex: Optional[int] = None) -> bool:
+        """供 stale-while-revalidate 使用的底层 JSON 写入。"""
+
+        try:
+            serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            if ex is None:
+                await redis_client.set(key, serialized)
+            else:
+                await redis_client.set(key, serialized, ex=max(ex, 1))
+            return True
+        except Exception:
+            logger.warning("Redis JSON 写入失败", key=key, exc_info=True)
             return False
 
     @staticmethod
     async def delete(key: str) -> bool:
-        """删除指定缓存（数据更新时必调用，保证数据一致性）"""
+        """删除指定缓存键。"""
         try:
             await redis_client.delete(key)
-            logger.info(f"[CacheUtil] 缓存删除成功 | key={key}")
             return True
-        except Exception as e:
-            logger.error(f"[CacheUtil] 删除缓存失败 | key={key}", exc_info=True)
+        except Exception:
+            logger.warning("Redis 删除失败", key=key, exc_info=True)
             return False
 
     @staticmethod
     async def exists(key: str) -> bool:
-        """判断缓存是否存在"""
+        """判断某个缓存键当前是否存在。"""
         try:
             return await redis_client.exists(key) == 1
         except Exception:
             return False
 
     @staticmethod
+    async def is_available() -> bool:
+        """通过 ping 检查 Redis 当前是否可用。"""
+        try:
+            return bool(await redis_client.ping())
+        except Exception:
+            return False
+
+    @staticmethod
     async def close() -> None:
-        """
-        关闭Redis连接池
-        作用：服务关闭时调用，防止连接泄漏（FastAPI生命周期钩子使用）
-        """
+        """关闭 Redis 客户端及其底层连接池。"""
         try:
             await redis_client.close()
             await redis_client.connection_pool.disconnect()
-            logger.info("[CacheUtil] Redis连接池已安全关闭")
-        except Exception as e:
-            logger.error("[CacheUtil] 关闭Redis连接失败", exc_info=True)
+        except Exception:
+            logger.warning("关闭 Redis 连接失败", exc_info=True)
 
-# ====================== 缓存Key生成工具======================
-def generate_cache_key(prefix: str, args: tuple, kwargs: dict) -> str:
+
+def generate_cache_key(prefix: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
+    """生成稳定缓存 key。
+
+    关键点：
+    - 显式跳过 `db/request/response` 这类运行时上下文对象。
+    - 结构化参数会被稳定序列化，而不是简单粗暴地忽略。
     """
-    生成唯一业务缓存Key
-    优化：1. 过滤无用参数 2. MD5哈希防止Key过长 3. 排序保证参数顺序不影响Key
-    :param prefix: 业务前缀（如：user:info、order:detail）
-    :return: 合法的Redis Key
-    """
-    # 过滤不需要参与生成Key的参数（self、Redis客户端、数据库连接等）
-    filter_types = (redis.Redis, type(None), int, str, float, bool)
-    key_parts = [prefix]
 
-    # 处理位置参数
-    for arg in args:
-        if not isinstance(arg, filter_types):
-            key_parts.append(str(arg))
+    normalized_args = [
+        _normalize_key_component(arg)
+        for arg in args
+        if not isinstance(arg, _IGNORED_ARG_TYPES)
+    ]
+    normalized_kwargs = {
+        key: _normalize_key_component(value)
+        for key, value in sorted(kwargs.items())
+        if key not in _IGNORED_KEYWORD_NAMES
+    }
 
-    # 处理关键字参数（排序后拼接，保证顺序无关）
-    for k, v in sorted(kwargs.items()):
-        if not isinstance(v, filter_types):
-            key_parts.append(f"{k}={v}")
+    raw_payload = {"args": normalized_args, "kwargs": normalized_kwargs}
+    serialized = json.dumps(raw_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.md5(serialized.encode("utf-8")).hexdigest()
+    return f"{prefix}:{digest}"
 
-    # 拼接原始Key
-    raw_key = ":".join(key_parts)
-    # 优化：Redis Key最大512字节，超长则MD5哈希处理
-    if len(raw_key) > 128:
-        raw_key = f"{prefix}:{hashlib.md5(raw_key.encode()).hexdigest()}"
 
-    return raw_key
+def _ttl_with_jitter(expire: int) -> int:
+    """为过期时间增加随机抖动，降低缓存雪崩风险。"""
+    jitter = min(max(expire // 10, 1), RedisConfig.CACHE_RANDOM_OFFSET)
+    return expire + random.randint(0, jitter)
 
-# ====================== 缓存装饰器（防穿透/雪崩/击穿） ======================
+
 def cache(
     key_prefix: str,
     expire: int = 3600,
     empty_expire: int = RedisConfig.EMPTY_CACHE_EXPIRE,
-    lock_expire: int = RedisConfig.LOCK_EXPIRE,
-    max_retry: int = RedisConfig.MAX_RETRY,
-):
-    """
-    通用异步缓存装饰器（高并发首选）
-    防护机制：
-    1. 空值缓存 → 防缓存穿透
-    2. 随机过期时间 → 防缓存雪崩
-    3. 分布式锁 + 双检锁 → 防缓存击穿
-    4. 熔断机制 → Redis宕机直接查库，保护服务
-    """
-    def decorator(func: Callable[..., Coroutine[Any, Any, T]]):
-        @wraps(func)  # 保留原函数名称、文档字符串，便于调试
+) -> Callable[[Callable[..., Coroutine[Any, Any, T]]], Callable[..., Coroutine[Any, Any, Optional[T]]]]:
+    """标准读穿缓存装饰器。"""
+
+    def decorator(
+        func: Callable[..., Coroutine[Any, Any, T]]
+    ) -> Callable[..., Coroutine[Any, Any, Optional[T]]]:
+        """接收业务函数并返回带缓存能力的包装函数。"""
+
+        @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Optional[T]:
-            # 1. 生成唯一缓存Key + 分布式锁Key
+            """执行标准读穿缓存流程，优先命中缓存，未命中时回源。"""
             cache_key = generate_cache_key(key_prefix, args, kwargs)
-            lock_key = f"lock:{cache_key}"
-            # 生成锁唯一标识：防止误删他人锁
-            lock_value = str(uuid.uuid4())
 
-            # ---------------- 熔断保护：Redis异常直接跳过缓存 ----------------
-            if RedisConfig.CIRCUIT_BREAKER and not await redis_client.ping():
-                logger.warning(f"[CacheDecorator] Redis熔断激活，直接执行函数 | key={cache_key}")
-                return await func(*args, **kwargs)
+            cached = await CacheUtil.get_entry(cache_key)
+            if cached.hit:
+                return cached.value
 
-            # ---------------- 第一步：查询缓存，命中直接返回 ----------------
-            cache_data = await CacheUtil.get_json(cache_key)
-            if cache_data is not None:
-                logger.debug(f"[CacheDecorator] 缓存命中 | key={cache_key}")
-                return cache_data
+            async def load_and_fill() -> Optional[T]:
+                """真正执行原函数，并把结果写回缓存。"""
 
-            # ---------------- 第二步：获取分布式锁（指数退避重试，防惊群） ----------------
-            for attempt in range(max_retry):
-                # SETNX：仅当Key不存在时设置，实现互斥锁
-                lock_acquired = await redis_client.set(
-                    lock_key, lock_value, nx=True, ex=lock_expire
-                )
+                # 并发场景下再次检查，避免重复查库。
+                second_check = await CacheUtil.get_entry(cache_key)
+                if second_check.hit:
+                    return second_check.value
 
-                if lock_acquired:
-                    logger.debug(f"[CacheDecorator] 分布式锁获取成功 | key={lock_key}")
-                    break
-
-                # 指数退避 + 随机抖动：避免大量请求同时抢锁（惊群效应）
-                sleep_time = (0.1 * (2 ** attempt)) + random.uniform(0, 0.1)
-                await asyncio.sleep(sleep_time)
-            else:
-                # 重试次数耗尽，直接查询数据库
-                logger.warning(f"[CacheDecorator] 锁获取失败，直接执行函数 | key={cache_key}")
-                return await func(*args, **kwargs)
+                result = await func(*args, **kwargs)
+                ttl = empty_expire if _looks_like_empty(result) else _ttl_with_jitter(expire)
+                await CacheUtil.set(cache_key, None if _looks_like_empty(result) else result, ex=ttl)
+                return None if _looks_like_empty(result) else result
 
             try:
-                # ---------------- 第三步：双检锁(抢锁失败后，再次校验缓存，抢到锁的已经写上了) ----------------
-                cache_data = await CacheUtil.get_json(cache_key)
-                if cache_data is not None:
-                    return cache_data
-
-                # ---------------- 第四步：缓存未命中，执行原始函数查库 ----------------
-                result = await func(*args, **kwargs)
-
-                # ---------------- 第五步：空值缓存（防穿透） ----------------
-                if result is None or (isinstance(result, (list, dict)) and not result):
-                    await CacheUtil.set(cache_key, None, ex=empty_expire)
-                    return None
-
-                # ---------------- 第六步：写入缓存（随机过期，防雪崩） ----------------
-                final_expire = expire + random.randint(1, RedisConfig.CACHE_RANDOM_OFFSET)
-                await CacheUtil.set(cache_key, result, ex=final_expire)
-                logger.debug(f"[CacheDecorator] 缓存写入成功 | key={cache_key}")
-                return result
-
-            except Exception as e:
-                logger.error(f"[CacheDecorator] 缓存执行异常 | key={cache_key}", exc_info=True)
-                # 异常降级：直接返回原始函数结果，保证服务可用
+                return await singleflight.do(f"cache:{cache_key}", load_and_fill)
+            except Exception:
+                logger.warning("缓存装饰器降级为直接执行函数", key=cache_key, exc_info=True)
                 return await func(*args, **kwargs)
 
-            finally:
-                try:
-                    await UNLOCK_SCRIPT(keys=[lock_key], args=[lock_value])
-                except Exception as e:
-                    if "NoScriptError" in str(type(e).__name__) or "NoScriptError" in str(e):
-                        logger.warning(f"[CacheDecorator] Lua脚本未缓存，跳过释放锁 | key={lock_key}")
-                    else:
-                        logger.warning(f"[CacheDecorator] 释放锁异常 | key={lock_key}, error={e}")
-
         return wrapper
+
     return decorator
 
-# ====================== 逻辑过期缓存装饰器（热点数据首选） ======================
+
 def logic_cache(
     key_prefix: str,
     expire_seconds: int = 3600,
-):
+) -> Callable[[Callable[..., Coroutine[Any, Any, T]]], Callable[..., Coroutine[Any, Any, Optional[T]]]]:
+    """stale-while-revalidate 风格的热点缓存装饰器。
+
+    适用场景：分类、配置、榜单等“读多写少且允许几秒旧值”的数据。
     """
-    逻辑过期缓存（超高并发热点数据专用）
-    核心原理：
-    1. 缓存永久有效，不依赖Redis TTL
-    2. 过期后立即返回旧数据，后台异步重建缓存
-    3. 无阻塞、高性能，用户无等待
-    适用场景：首页数据、商品详情、配置中心等热点数据
-    """
-    def decorator(func: Callable[..., Coroutine[Any, Any, T]]):
+
+    hard_expire_seconds = max(expire_seconds * 3, expire_seconds + 60)
+
+    def decorator(
+        func: Callable[..., Coroutine[Any, Any, T]]
+    ) -> Callable[..., Coroutine[Any, Any, Optional[T]]]:
+        """接收业务函数并返回带热点缓存能力的包装函数。"""
+
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Optional[T]:
+            """执行热点缓存读取流程，必要时触发后台刷新。"""
             cache_key = generate_cache_key(key_prefix, args, kwargs)
-            now = int(datetime.now().timestamp())
+            raw = await CacheUtil.get(cache_key)
+            now = int(time.time())
 
-            # ---------------- 第一步：查询缓存 ----------------
-            cache_data = await CacheUtil.get_json(cache_key)
-            # 无缓存：首次查询，直接查库并写入
-            if not cache_data:
-                result = await func(*args, **kwargs)
-                # 存储结构：数据 + 逻辑过期时间，即没有给Redis设置任何 ex 过期时间！ Redis里这条数据【永久有效，永远不会被删除】
-                cache_value = {"data": result, "expire": now + expire_seconds}
-                await CacheUtil.set(cache_key, cache_value)
-                return result
-
-            # ---------------- 第二步：缓存未过期，直接返回 ----------------
-            if cache_data["expire"] > now:
-                return cache_data["data"]
-
-            # ---------------- 第三步：缓存过期，异步重建，立即返回旧数据 ----------------
-            async def rebuild_task():
-                """异步缓存重建任务（带分布式锁，防止并发重复查库）"""
+            if raw:
                 try:
-                    await _rebuild_cache(cache_key, func, args, kwargs, expire_seconds)
-                except Exception as e:
-                    logger.error(f"[LogicCache] 缓存重建失败 | key={cache_key}", exc_info=True)
+                    payload = json.loads(raw)
+                    if payload.get("mode") == "stale":
+                        value = None if payload.get("empty", False) else payload.get("value")
+                        expire_at = int(payload.get("expire_at", 0))
 
-            # 创建后台任务
-            asyncio.create_task(rebuild_task())
-            # 核心：立即返回旧数据，用户无等待
-            return cache_data["data"]
+                        if expire_at > now:
+                            return value
 
-        # 缓存重建函数：带分布式锁
-        async def _rebuild_cache(key: str, func: Callable, args: Any, kwargs: Any, expire: int):
-            lock_key = f"lock:logic:{key}"
-            lock_value = str(uuid.uuid4())
+                        async def refresh_task() -> None:
+                            """在后台刷新过期热点缓存，避免阻塞当前请求。"""
+                            try:
+                                await singleflight.do(
+                                    f"logic-refresh:{cache_key}",
+                                    lambda: _refresh_logic_cache(
+                                        cache_key=cache_key,
+                                        func=func,
+                                        args=args,
+                                        kwargs=kwargs,
+                                        expire_seconds=expire_seconds,
+                                        hard_expire_seconds=hard_expire_seconds,
+                                    ),
+                                )
+                            except Exception:
+                                logger.warning("热点缓存后台刷新失败", key=cache_key, exc_info=True)
 
-            # 获取互斥锁
-            lock_acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=5)
-            if not lock_acquired:
-                return
+                        asyncio.create_task(refresh_task())
+                        return value
+                except json.JSONDecodeError:
+                    logger.warning("热点缓存数据损坏，按未命中处理", key=cache_key)
 
-            try:
-                # 双检：防止重复查询数据库
-                cache = await CacheUtil.get_json(key)
-                if cache and cache["expire"] > int(datetime.now().timestamp()):
-                    return
-
-                # 查库并更新缓存
-                result = await func(*args, **kwargs)
-                new_data = {
-                    "data": result,
-                    "expire": int(datetime.now().timestamp()) + expire
-                }
-                await CacheUtil.set(key, new_data)
-                logger.info(f"[LogicCache] 缓存重建成功 | key={key}")
-
-            finally:
-                try:
-                    await UNLOCK_SCRIPT(keys=[lock_key], args=[lock_value])
-                except Exception as e:
-                    if "NoScriptError" in str(type(e).__name__) or "NoScriptError" in str(e):
-                        logger.warning(f"[LogicCache] Lua脚本未缓存，跳过释放锁 | key={lock_key}")
-                    else:
-                        logger.warning(f"[LogicCache] 释放锁异常 | key={lock_key}, error={e}")
+            result = await func(*args, **kwargs)
+            await _write_logic_cache(cache_key, result, expire_seconds, hard_expire_seconds)
+            return None if _looks_like_empty(result) else result
 
         return wrapper
+
     return decorator
 
+
+async def _write_logic_cache(
+    cache_key: str,
+    result: Any,
+    expire_seconds: int,
+    hard_expire_seconds: int,
+) -> None:
+    """写入 stale-while-revalidate payload。"""
+
+    payload = {
+        "mode": "stale",
+        "version": 1,
+        "expire_at": int(time.time()) + expire_seconds,
+        "empty": _looks_like_empty(result),
+        "value": None if _looks_like_empty(result) else _normalize_cache_value(result),
+    }
+    await CacheUtil.set_raw_json(cache_key, payload, ex=hard_expire_seconds)
+
+
+async def _refresh_logic_cache(
+    cache_key: str,
+    func: Callable[..., Coroutine[Any, Any, T]],
+    args: Iterable[Any],
+    kwargs: dict[str, Any],
+    expire_seconds: int,
+    hard_expire_seconds: int,
+) -> None:
+    """后台刷新热点缓存。"""
+
+    result = await func(*args, **kwargs)
+    await _write_logic_cache(cache_key, result, expire_seconds, hard_expire_seconds)

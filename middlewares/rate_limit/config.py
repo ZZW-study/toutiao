@@ -1,38 +1,52 @@
 # -*- coding: utf-8 -*-
-"""限流配置类和数据结构定义。
+"""限流配置与数据结构定义。"""
 
-包含限流维度枚举、配置类和结果返回结构。
-"""
-
+from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 
 from configs.settings import get_settings
 
-
 settings = get_settings()
 
 
 class RateLimitDimension(Enum):
-    """限流维度枚举"""
+    """限流维度枚举。"""
+
     IP = "ip"
     USER_ID = "user_id"
     COMBINED = "combined"
 
 
-@dataclass
+@dataclass(slots=True)
 class RateLimitConfig:
-    """限流配置"""
-    capacity: int = settings.TOKEN_BUCKET_CAPACITY  # 桶容量（支持突发流量）
-    rate: float = settings.TOKEN_RATE  # 令牌生成速率（个/秒）
+    """限流参数。"""
+
+    capacity: int = settings.TOKEN_BUCKET_CAPACITY
+    rate: float = settings.TOKEN_RATE
     dimension: RateLimitDimension = RateLimitDimension(settings.RATE_LIMIT_DIMENSION)
 
 
-@dataclass
+@dataclass(slots=True)
+class RateLimitIdentity:
+    """当前请求的限流身份。
+
+    `key` 是真正参与 Redis 计数与本地限流的唯一标识。
+    """
+
+    key: str
+    ip: str
+    user_id: int | None
+    scope: str
+
+
+@dataclass(slots=True)
 class RateLimitResult:
-    """限流结果返回结构"""
-    allowed: bool  # 是否允许通过
-    retry_after: float = 0.0  # 重试等待时间（秒）
-    remaining_tokens: float = 0.0  # 剩余令牌数
-    reason: str = ""  # 限流原因
+    """限流结果。"""
+
+    allowed: bool
+    retry_after: float = 0.0
+    remaining_tokens: float = 0.0
+    reason: str = ""
+

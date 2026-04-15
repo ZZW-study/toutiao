@@ -1,41 +1,50 @@
-# 收藏模块
-from pydantic import BaseModel,Field,ConfigDict
+"""收藏模块的请求与响应模型。"""
+
+from __future__ import annotations
+
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from schemas.base import NewsItemBase
 
-# 请求体参数模型类
 
-# 添加收藏的请求体模型类
 class FavoriteAddRequest(BaseModel):
-    news_id: int = Field(...,alias="newsId")
+    """添加收藏时的请求体。"""
+
+    news_id: int = Field(..., alias="newsId")
 
 
-# 响应体参数模型类
-
-# 用户收藏检查响应模型类
 class FavoriteCheckResponse(BaseModel):
-    is_favorite: bool = Field(...,alias="isFavorite")
+    """检查某篇新闻是否已收藏时的响应体。"""
+
+    is_favorite: bool = Field(..., alias="isFavorite")
 
 
-# 规划两个类：一个是新闻模型类 + 收藏的模型类
 class FavoriteNewsItemResponse(NewsItemBase):
+    """收藏列表中的单条新闻数据。
+
+    它在基础新闻字段之上，又补充了“收藏记录本身”的信息，
+    例如收藏 ID 和收藏时间。
+    """
+
     favorite_id: int = Field(alias="favoriteId")
     favorite_time: datetime = Field(alias="favoriteTime")
 
     model_config = ConfigDict(
         populate_by_name=True,
-        from_attributes=True
+        from_attributes=True,
     )
 
 
-# 收藏列表接口响应模型类
 class FavoriteListResponse(BaseModel):
-    list: list[FavoriteNewsItemResponse] # 给pydantic模型传入字典，会自动校验，成功则创建实例，跟请求体传入的逻辑一样
+    """收藏列表接口响应体。"""
+
+    list: list[FavoriteNewsItemResponse]
     total: int
     has_more: bool = Field(alias="hasMore")
 
     model_config = ConfigDict(
         populate_by_name=True,
-        from_attributes=True
+        from_attributes=True,
     )
-

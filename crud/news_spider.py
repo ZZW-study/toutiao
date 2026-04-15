@@ -4,8 +4,7 @@
 优化版本：解决N+1查询问题，使用批量操作提升性能
 """
 import hashlib
-from datetime import datetime, timezone
-from sqlalchemy import select, func, and_
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.news import News, Category
@@ -16,6 +15,7 @@ logger = get_logger(name="NewsSpiderCRUD")
 
 
 class NewsSpiderCRUD:
+    """封装新闻爬虫数据的去重、批量入库和分类初始化逻辑。"""
 
     @staticmethod
     def generate_news_hash(title: str, content: str) -> str:
@@ -62,8 +62,6 @@ class NewsSpiderCRUD:
                 category_id=news_item.category_id,
                 views=0,
                 publish_time=news_item.publish_time,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
             )
             db.add(news)
             await db.commit()
@@ -102,7 +100,6 @@ class NewsSpiderCRUD:
             news_to_save.append(news_item)
 
         # 第三步：批量创建新闻对象
-        now = datetime.now(timezone.utc)
         news_objects = []
         for news_item in news_to_save:
             news = News(
@@ -114,8 +111,6 @@ class NewsSpiderCRUD:
                 category_id=news_item.category_id,
                 views=0,
                 publish_time=news_item.publish_time,
-                created_at=now,
-                updated_at=now
             )
             news_objects.append(news)
 
@@ -167,8 +162,6 @@ class NewsSpiderCRUD:
                 category = Category(
                     name=cat_data["name"],
                     sort_order=cat_data["sort_order"],
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc)
                 )
                 categories_to_create.append(category)
 

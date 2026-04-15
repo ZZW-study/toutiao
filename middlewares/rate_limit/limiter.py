@@ -1,96 +1,135 @@
 # -*- coding: utf-8 -*-
-"""统一限流调度器。
+"""统一限流调度器。"""
 
-整合所有限流逻辑，提供统一的限流入口。
-执行流程：黑名单检查 → 滑动窗口防刷 → 分布式限流 → Redis异常本地降级
-"""
-
+from __future__ import annotations
 
 from fastapi.requests import Request
-from typing import Optional
 
 from configs.settings import get_settings
-from utils.logger import get_logger
-from middlewares.rate_limit.config import RateLimitConfig, RateLimitResult, RateLimitDimension
-from middlewares.rate_limit.token_bucket import LocalTokenBucket
+from middlewares.rate_limit.config import (
+    RateLimitConfig,
+    RateLimitDimension,
+    RateLimitIdentity,
+    RateLimitResult,
+)
 from middlewares.rate_limit.redis_limit import RedisRateLimit
-
+from middlewares.rate_limit.token_bucket import LocalTokenBucket
+from utils.logger import get_logger
 
 settings = get_settings()
 logger = get_logger(name="RateLimiter")
 
 
-# 统一限流调度器（串联所有限流逻辑，核心入口类）
-# 完整执行流程：黑名单检查 → 滑动窗口防刷 → 分布式限流 → Redis异常本地降级
 class UnifiedRateLimiter:
-    """
-    统一限流器
-    作用：整合所有限流规则，业务层只需调用此类，无需关心底层实现
-    """
-    def __init__(self, config: Optional[RateLimitConfig] = None):
+    """统一限流入口。"""
+
+    def __init__(self, config: RateLimitConfig | None = None) -> None:
+        """初始化统一限流器，并确定当前要使用的限流配置。"""
         self.cfg = config or RateLimitConfig()
 
-    def _get_identifier(self, request: Request) -> str:
-        """
-        从FastAPI请求对象中生成唯一限流标识
-        支持三种模式：IP限流 / 用户ID限流 / IP+用户组合限流
-        :param request: FastAPI Request请求对象
-        :return: 唯一限流标识字符串
-        """
-        # 获取客户端IP：兼容无client属性的异常情况
-        ip = request.client.host if hasattr(request, "client") else "unknown"
-        # 获取登录用户ID：从请求状态state中获取（登录中间件赋值）
-        user_id = request.state.user_id if hasattr(request.state, "user_id") else None
+    def _get_client_ip(self, request: Request) -> str:
+        """提取客户端 IP。
 
-        # 根据配置的限流维度，返回对应标识
-        dim = self.cfg.dimension
-        if dim == RateLimitDimension.IP:
-            # 纯IP限流
-            return f"ip:{ip}"
-        if dim == RateLimitDimension.USER_ID and user_id:
-            # 纯用户ID限流（仅登录用户）
-            return f"user:{user_id}"
-        # 默认：组合限流（登录用户用IP+UID，未登录用纯IP）
-        return f"com:{ip}:{user_id}" if user_id else f"ip:{ip}"
-
-    async def check(self, request: Request) -> RateLimitResult:
+        先读反向代理常见头，再回退到 `request.client.host`。
         """
-        执行完整的限流检查流程
-        :param request: FastAPI请求对象
-        :return: 最终限流结果
-        """
-        # 先生成当前请求的唯一限流标识
-        ident = self._get_identifier(request)
-        # 黑名单检查：在黑名单则直接拒绝访问
-        if await RedisRateLimit.is_in_blacklist(ident):
-            return RateLimitResult(allowed=False, reason="已被临时封禁，请稍后再试")
 
-        # 2. 滑动窗口防刷检查：请求超限则加入黑名单并拒绝
-        exceeded, count = await RedisRateLimit.anti_spam_check(ident)
-        if exceeded:
-            await RedisRateLimit.add_to_blacklist(ident)
-            return RateLimitResult(
-                allowed=False,
-                reason=f"请求频率过高({count}次)，已自动封禁"
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
+
+        return request.client.host if request.client else "unknown"
+
+    def _build_identity(self, request: Request) -> RateLimitIdentity:
+        """根据请求和配置构造限流身份。"""
+
+        ip = self._get_client_ip(request)
+        user_id = getattr(request.state, "user_id", None)
+
+        if self.cfg.dimension == RateLimitDimension.IP:
+            return RateLimitIdentity(key=f"ip:{ip}", ip=ip, user_id=None, scope="ip")
+
+        if self.cfg.dimension == RateLimitDimension.USER_ID:
+            if user_id is not None:
+                return RateLimitIdentity(
+                    key=f"user:{user_id}",
+                    ip=ip,
+                    user_id=user_id,
+                    scope="user",
+                )
+            return RateLimitIdentity(key=f"ip:{ip}", ip=ip, user_id=None, scope="ip")
+
+        if user_id is not None:
+            return RateLimitIdentity(
+                key=f"user:{user_id}:ip:{ip}",
+                ip=ip,
+                user_id=user_id,
+                scope="combined",
             )
 
-        # 3.分布式令牌桶限流，检查令牌是否充足
-        limit_result = await RedisRateLimit.token_limit(ident, self.cfg)
-        # Redis服务正常时，直接返回令牌桶检查结果（无论通过/拒绝）
-        if "Redis异常" not in limit_result.reason:
-            return limit_result
+        return RateLimitIdentity(key=f"ip:{ip}", ip=ip, user_id=None, scope="ip")
 
-        # 4. Redis异常降级：配置开启本地限流，则使用本地令牌桶兜底
-        if settings.ENABLE_LOCAL_FALLBACK:
-            logger.warning(f"[降级] Redis 异常，使用本地限流: {ident}")
-            # 获取本地令牌桶实例
-            bucket = await LocalTokenBucket.get_instance(ident, self.cfg.capacity, self.cfg.rate)
-            # 执行本地限流检查
-            return await bucket.try_consume()
+    async def check(self, request: Request) -> RateLimitResult:
+        """执行完整限流流程。
 
-        # 5. 无Redis、无降级，直接放行，保证服务可用性
-        return RateLimitResult(allowed=True, reason="限流服务异常，临时放行")
+        为了避免同一请求链路里被 dependency/middleware 重复执行，
+        这里加入了请求级幂等保护。
+        """
+
+        if getattr(request.state, "_rate_limit_checked", False):
+            return getattr(
+                request.state,
+                "_rate_limit_result",
+                RateLimitResult(allowed=True),
+            )
+
+        identity = self._build_identity(request)
+
+        try:
+            if await RedisRateLimit.is_in_blacklist(identity.key):
+                result = RateLimitResult(
+                    allowed=False,
+                    retry_after=float(settings.BLACKLIST_DURATION),
+                    reason="已被临时封禁，请稍后再试",
+                )
+                request.state._rate_limit_checked = True
+                request.state._rate_limit_result = result
+                return result
+
+            exceeded, count = await RedisRateLimit.anti_spam_check(identity)
+            if exceeded:
+                await RedisRateLimit.add_to_blacklist(identity.key)
+                result = RateLimitResult(
+                    allowed=False,
+                    retry_after=float(settings.BLACKLIST_DURATION),
+                    reason=f"请求频率过高（{count} 次），已自动封禁",
+                )
+                request.state._rate_limit_checked = True
+                request.state._rate_limit_result = result
+                return result
+
+            result = await RedisRateLimit.token_limit(identity, self.cfg)
+            if "Redis异常" in result.reason and settings.ENABLE_LOCAL_FALLBACK:
+                logger.warning("Redis 限流不可用，启用本地令牌桶降级", identity=identity.key)
+                bucket = await LocalTokenBucket.get_instance(
+                    identity.key,
+                    self.cfg.capacity,
+                    self.cfg.rate,
+                )
+                result = await bucket.try_consume()
+
+            request.state._rate_limit_checked = True
+            request.state._rate_limit_result = result
+            return result
+        except Exception as exc:
+            logger.warning("统一限流执行异常，降级放行", error=str(exc), exc_info=True)
+            result = RateLimitResult(allowed=True, reason="限流服务异常，临时放行")
+            request.state._rate_limit_checked = True
+            request.state._rate_limit_result = result
+            return result
 
 
-# 全局限流器实例
 unified_limiter = UnifiedRateLimiter()

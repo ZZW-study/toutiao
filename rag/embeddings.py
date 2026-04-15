@@ -1,87 +1,97 @@
 # -*- coding: utf-8 -*-
-"""
-Embedding 模型配置
+"""Embedding 服务。
 
-该模块负责加载和管理文本向量化模型（Embedding Model）。
-Embedding 模型将文本转换为高维向量，使得语义相似的文本在向量空间中距离较近。
-
-使用 HuggingFace 的多语言模型，支持中文：
-- 模型名称: paraphrase-multilingual-MiniLM-L12-v2
-- 向量维度: 384
-- 支持语言: 50+ 种语言，包括中文
-
-优点：
-- 离线运行，无需 API 调用
-- 中文效果较好
-- 模型体积小（约 400MB）
+这里不再在模块导入时直接加载模型，而是改成显式的服务类 + 惰性初始化。
+这样可以避免：
+- 导入路由时首屏卡住。
+- 测试环境一 import `main` 就尝试加载大模型。
 """
 
-from typing import Optional
+from __future__ import annotations
+
 from pathlib import Path
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from threading import Lock
+from typing import Optional
+
+from starlette.concurrency import run_in_threadpool
+
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:  # pragma: no cover - 兼容旧依赖组合
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+
 from utils.logger import get_logger
 
-# 获取日志记录器
 logger = get_logger(name="Embeddings")
 
-
-# ========== 全局变量 ==========
-# 缓存 Embedding 模型实例，避免重复加载
-_embeddings_instance: Optional[HuggingFaceEmbeddings] = None
-embedding_dimension = 384
-
-# ========== 配置--模型名字 ==========
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-
-
-# 模型缓存目录
 MODEL_CACHE_DIR = Path(__file__).parent.parent / "data" / "embedding_model"
+EMBEDDING_DIMENSION = 384
+
+
+class EmbeddingService:
+    """统一管理 embedding 模型的生命周期。"""
+
+    def __init__(self) -> None:
+        """初始化 embedding 服务的懒加载状态。"""
+        self._instance: Optional[HuggingFaceEmbeddings] = None
+        self._lock = Lock()
+
+    def _build_sync(self) -> HuggingFaceEmbeddings:
+        """同步加载 HuggingFace embedding 模型实例。"""
+        Path.mkdir(MODEL_CACHE_DIR, exist_ok=True, parents=True)
+        logger.info("开始加载 Embedding 模型", model=EMBEDDING_MODEL_NAME)
+        embeddings = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            cache_folder=str(MODEL_CACHE_DIR),
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
+        logger.info("Embedding 模型加载完成")
+        return embeddings
+
+    def get_embeddings(self) -> HuggingFaceEmbeddings:
+        """同步获取模型实例。"""
+
+        if self._instance is not None:
+            return self._instance
+
+        with self._lock:
+            if self._instance is None:
+                self._instance = self._build_sync()
+        return self._instance
+
+    async def aget_embeddings(self) -> HuggingFaceEmbeddings:
+        """异步获取模型实例。
+
+        重型初始化放到线程池中，避免阻塞 FastAPI 事件循环。
+        """
+
+        if self._instance is not None:
+            return self._instance
+
+        await run_in_threadpool(self.get_embeddings)
+        return self.get_embeddings()
+
+
+_embedding_service: Optional[EmbeddingService] = None
+
+
+def get_embedding_service() -> EmbeddingService:
+    """返回 embedding 服务的全局单例。"""
+    global _embedding_service
+    if _embedding_service is None:
+        _embedding_service = EmbeddingService()
+    return _embedding_service
 
 
 def get_embeddings() -> HuggingFaceEmbeddings:
-    """
-    获取 Embedding 模型实例（单例模式）
+    """兼容旧接口。"""
 
-    该函数返回一个全局共享的 Embedding 模型实例。
-    首次调用时会加载模型，后续调用直接返回缓存的实例。
+    return get_embedding_service().get_embeddings()
 
-    模型加载可能需要几分钟时间（首次运行需要下载模型文件）。
 
-    返回:
-        HuggingFaceEmbeddings 实例，可用于文本向量化
-    """
-    global _embeddings_instance
+async def preload_embeddings() -> HuggingFaceEmbeddings:
+    """启动期可选预热。"""
 
-    # 如果已经加载过，直接返回缓存的实例
-    if _embeddings_instance is not None:
-        return _embeddings_instance
-
-    logger.info(f"开始加载 Embedding 模型: {EMBEDDING_MODEL_NAME}")
-
-    try:
-        # 确保缓存目录存在
-        Path.mkdir(MODEL_CACHE_DIR, exist_ok=True, parents=True)
-
-        # ========== 创建 Embedding 模型 ==========
-        # model_kwargs: 模型参数
-        # - device: 'cpu' 使用 CPU 运行（如果有 GPU 可以改为 'cuda'）
-        # encode_kwargs: 编码参数
-        # - normalize_embeddings: True 表示对向量进行归一化，使余弦距离等价于点积
-        _embeddings_instance = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL_NAME,
-            cache_folder=str(MODEL_CACHE_DIR),  
-            model_kwargs={
-                "device": "cuda"         
-            },
-            encode_kwargs={
-                "normalize_embeddings": True
-            }
-        )
-
-        logger.info("Embedding 模型加载完成")
-
-    except Exception as e:
-        logger.error(f"加载 Embedding 模型失败: {e}")
-        raise
-
-    return _embeddings_instance
+    return await get_embedding_service().aget_embeddings()

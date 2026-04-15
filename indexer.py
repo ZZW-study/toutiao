@@ -20,10 +20,15 @@ import asyncio
 from typing import List
 
 from sqlalchemy import select
+from starlette.concurrency import run_in_threadpool
 
 from configs.db_conf import AsyncSessionLocal
 from models.news import News
-from rag.vectorstore import add_news_to_vectorstore, get_vectorstore_stats
+from rag.vectorstore import (
+    add_news_to_vectorstore,
+    get_vectorstore_stats,
+    reset_vectorstore_service,
+)
 from utils.logger import get_logger
 
 # 获取日志记录器
@@ -94,7 +99,8 @@ async def index_all_news(batch_size: int = 100) -> dict:
                 # 添加到向量存储（同步调用），返回成功添加数量
                 # 注意：add_news_to_vectorstore 可能内部依赖文件系统或 embedding 模型，
                 # 在生产环境中可能需要额外的错误重试或限流。
-                added = add_news_to_vectorstore(news_list)
+                # 向量化与落盘是同步重操作，这里放到线程池执行，避免阻塞 async 任务。
+                added = await run_in_threadpool(add_news_to_vectorstore, news_list)
                 indexed += added
                 skipped += len(news_list) - added
 
@@ -159,7 +165,7 @@ async def index_news_by_id(news_id: int) -> bool:
             }
 
             # 添加到向量存储
-            added = add_news_to_vectorstore([news_dict])
+            added = await run_in_threadpool(add_news_to_vectorstore, [news_dict])
 
             if added > 0:
                 logger.info(f"新闻索引成功: {news_id}")
@@ -213,7 +219,7 @@ async def index_news_by_ids(news_ids: List[int]) -> dict:
             ]
 
             # 添加到向量存储
-            added = add_news_to_vectorstore(news_dicts)
+            added = await run_in_threadpool(add_news_to_vectorstore, news_dicts)
             indexed = added
             failed = total - indexed
 
@@ -258,9 +264,8 @@ async def reindex_all():
             shutil.rmtree(CHROMA_PERSIST_DIR)
             logger.info("已删除现有向量库")
 
-        # 重置实例缓存
-        from rag import vectorstore
-        vectorstore._vectorstore_instance = None
+        # 重置内存中的向量库单例，确保下次访问会重新连接新的持久化目录。
+        reset_vectorstore_service()
 
         # 重新索引
         result = await index_all_news()

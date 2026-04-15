@@ -27,6 +27,7 @@ def _now():
 
 @dataclass
 class NewsItem:
+    """描述单条抓取结果的数据结构，便于在抓取和入库之间传递。"""
     title: str
     content: str
     description: str
@@ -39,6 +40,7 @@ class NewsItem:
 
 
 class NewsSpiderService:
+    """封装新闻抓取、解析、清洗和分类逻辑。"""
 
     @staticmethod
     def classify_news(title: str, content: str = "", description: str = "") -> int:

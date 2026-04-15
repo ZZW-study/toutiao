@@ -1,1 +1,6 @@
-# Test package for toutiao_backend
+"""测试包标记文件。
+
+保留这个文件的目的主要是告诉 Python：
+`tests` 目录是一个可以被导入的包。
+这样测试辅助模块、fixture 或常量在导入时会更稳定。
+"""
