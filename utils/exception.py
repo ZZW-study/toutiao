@@ -22,7 +22,7 @@ DEBUG_MODE = True
 async def http_exception_handler(request: Request, exc: HTTPException):
     """处理业务层主动抛出的 HTTP 异常。
 
-    这类异常往往是“预期内失败”，例如：
+    这类异常往往是"预期内失败"，例如：
     - 参数非法
     - 未登录
     - 数据不存在

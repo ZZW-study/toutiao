@@ -23,7 +23,7 @@ def register_exception_handlers(app):
 
     注册顺序遵循一个原则：
     越具体的异常放越前面，越宽泛的异常放越后面。
-    否则父类异常会先匹配，把子类异常提前“吃掉”。
+    否则父类异常会先匹配，把子类异常提前"吃掉"。
     """
 
     app.add_exception_handler(HTTPException, http_exception_handler)

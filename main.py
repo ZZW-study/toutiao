@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-“””FastAPI 应用入口。
+"""FastAPI 应用入口。
 
 负责组装应用：创建实例、注册中间件和路由、管理资源生命周期。
-“””
+"""
 
 from __future__ import annotations
 
@@ -22,20 +22,20 @@ from utils.exception_handlers import register_exception_handlers
 from utils.logger import get_logger
 
 settings = get_settings()
-logger = get_logger(name=”Application”)
+logger = get_logger(name="Application")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    “””应用启动与关闭逻辑。”””
+    """应用启动与关闭逻辑。"""
     # 启动时预热 RAG 资源（可选）
     if settings.RAG_PRELOAD_ON_STARTUP:
         try:
             await preload_embeddings()
             await preload_vectorstore()
-            logger.info(“RAG 资源预热完成”)
+            logger.info("RAG 资源预热完成")
         except Exception as exc:
-            logger.warning(“RAG 预热失败，服务将继续启动”, error=str(exc), exc_info=True)
+            logger.warning("RAG 预热失败，服务将继续启动", error=str(exc), exc_info=True)
 
     try:
         yield
@@ -53,16 +53,16 @@ app = FastAPI(
 
 # CORS 配置：允许本地前端跨域访问
 origins = [
-    “http://localhost”,
-    “http://localhost:5173”,
+    "http://localhost",
+    "http://localhost:5173",
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=[“*”],
-    allow_headers=[“*”],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 注册异常处理器
@@ -70,10 +70,10 @@ register_exception_handlers(app)
 app.add_exception_handler(RateLimitExceeded, custom_rate_limit_handler)
 
 
-@app.get(“/”)
+@app.get("/")
 async def root():
-    “””健康检查接口。”””
-    return {“msg”: “Hello World”}
+    """健康检查接口。"""
+    return {"msg": "Hello World"}
 
 
 # 挂载路由
@@ -84,5 +84,5 @@ app.include_router(history.router)
 app.include_router(chat.router)
 
 
-if __name__ == “__main__”:
-    uvicorn.run(“main:app”, host=”127.0.0.1”, port=8000, reload=True)
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

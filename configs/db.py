@@ -46,22 +46,7 @@ settings = get_settings()
 # 格式：mysql+aiomysql://user:password@host:port/database?charset=utf8mb4
 ASYNC_DATABASE_URL = settings.MYSQL_DATABASE_URL
 
-# ==============================================================================
-# 异步数据库引擎
-# ==============================================================================
-# 引擎是 SQLAlchemy 的核心对象，负责：
-# - 维护连接池（应用程序与数据库之间的连接集合）
-# - 执行 SQL 语句
-# - 处理数据库方言差异（MySQL、PostgreSQL 等）
-#
-# 关键参数说明：
-# - pool_size: 连接池保持的连接数量，默认 5，生产环境建议 20-50
-# - max_overflow: 允许临时创建的额外连接数，pool_size + max_overflow = 最大连接数
-# - pool_timeout: 获取连接的超时时间（秒），超时抛出异常
-# - pool_recycle: 连接回收时间（秒），防止 MySQL 8 小时断连问题
-# - pool_pre_ping: 每次使用前检测连接是否存活，自动剔除坏连接
-# - echo: 是否打印 SQL 语句，调试时开启，生产环境关闭
-# ==============================================================================
+
 
 async_engine = create_async_engine(
     url=ASYNC_DATABASE_URL,
