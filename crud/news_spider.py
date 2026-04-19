@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""
-新闻爬虫数据存储 CRUD
+"""新闻爬虫数据存储 CRUD
+
 优化版本：解决N+1查询问题，使用批量操作提升性能
 """
 import hashlib
@@ -86,11 +86,11 @@ class NewsSpiderCRUD:
         skipped_count = 0
         failed_count = 0
 
-        # 第一步：批量查询已存在的标题
+        # 批量去重：一次查出所有已存在标题，避免逐条查询
         all_titles = [item.title for item in news_list]
         existing_titles = await NewsSpiderCRUD._get_existing_titles(db, all_titles)
 
-        # 第二步：过滤出需要保存的新闻
+        # 过滤已存在条目，收集待入库新闻
         news_to_save = []
         for news_item in news_list:
             if news_item.title in existing_titles:
@@ -99,7 +99,7 @@ class NewsSpiderCRUD:
                 continue
             news_to_save.append(news_item)
 
-        # 第三步：批量创建新闻对象
+        # 构造 ORM 对象批量插入，单次提交以减少事务开销
         news_objects = []
         for news_item in news_to_save:
             news = News(
@@ -114,7 +114,6 @@ class NewsSpiderCRUD:
             )
             news_objects.append(news)
 
-        # 第四步：批量插入并单次提交
         if news_objects:
             try:
                 db.add_all(news_objects)
@@ -149,13 +148,12 @@ class NewsSpiderCRUD:
             {"name": "财经", "sort_order": 8}
         ]
 
-        # 批量查询已存在的分类
+        # 批量查找已有分类，再补创建缺失项
         existing_names = set()
         stmt = select(Category.name)
         result = await db.execute(stmt)
         existing_names = {row[0] for row in result.fetchall()}
 
-        # 批量创建缺失的分类
         categories_to_create = []
         for cat_data in default_categories:
             if cat_data["name"] not in existing_names:

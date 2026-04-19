@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pydantic 数据模型统一导出。
-
-本模块统一导出所有请求/响应模型。
-"""
+"""Pydantic 数据模型统一导出。"""
 
 from schemas.base import NewsItemBase
 from schemas.users import (

@@ -1,11 +1,44 @@
+# -*- coding: utf-8 -*-
 """项目统一配置中心。
 
-这个模块基于 Pydantic Settings 做配置管理，目标是：
-1. 把环境变量读取逻辑收口到一个地方，避免满项目硬编码。
-2. 让每个配置项都带上清晰类型，启动时就能尽早发现配置错误。
-3. 给数据库、Redis、爬虫、RAG、Agent 等模块提供统一入口。
+本模块是整个应用的配置管理核心，基于 Pydantic Settings 实现类型安全的配置管理。
 
-对初学者来说，可以把它理解成“整个项目的总开关面板”。
+核心职责：
+-----------
+1. 集中管理所有配置项
+   - 数据库连接参数（MySQL、Redis、RabbitMQ）
+   - 业务参数（限流、爬虫、LLM）
+   - 环境相关配置（调试模式、API 密钥）
+
+2. 自动读取环境变量
+   - 优先从 .env 文件读取
+   - 支持默认值，无 .env 也能运行
+   - 类型自动转换和校验
+
+3. 提供计算属性
+   - 数据库连接 URL（动态拼接）
+   - 爬虫分类规则（关键词映射）
+   - 新闻源配置（数据源列表）
+
+设计理念：
+----------
+为什么用 Pydantic Settings？
+- 类型安全：配置项有明确类型，启动时就能发现配置错误
+- 环境隔离：开发/测试/生产环境通过不同 .env 文件区分
+- 文档友好：每个配置项都有注释，新成员容易理解
+
+配置加载顺序：
+--------------
+1. 类字段默认值
+2. .env 文件中的值（覆盖默认值）
+3. 环境变量中的值（覆盖 .env）
+
+使用示例：
+----------
+from configs.settings import get_settings
+settings = get_settings()
+print(settings.MYSQL_HOST)  # 访问配置项
+print(settings.MYSQL_DATABASE_URL)  # 访问计算属性
 """
 
 from __future__ import annotations
@@ -17,87 +50,149 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """项目运行时配置。
+    """项目运行时配置类。
 
-    `BaseSettings` 的特点是：
-    - 类字段会自动映射到环境变量。
-    - 有默认值时，即使没有 `.env` 也能跑起来。
-    - 没有通过校验的配置会在启动阶段直接报错，问题暴露更早。
+    所有配置项都在这里定义，每个字段对应一个环境变量。
+    字段名不区分大小写，所以 MYSQL_HOST 和 mysql_host 都能读取到同一个变量。
+
+    配置分组：
+    ----------
+    1. 应用基础配置：应用名称、版本、调试模式
+    2. MySQL 配置：数据库连接参数
+    3. Redis 配置：缓存和分布式锁
+    4. RabbitMQ 配置：消息队列
+    5. 限流配置：API 访问频率限制
+    6. 防刷配置：恶意请求防护
+    7. LLM/RAG 配置：大语言模型和向量检索
+    8. 爬虫配置：新闻抓取参数
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
+        env_file=".env",  # 从 .env 文件读取环境变量
+        env_file_encoding="utf-8",  # 文件编码
+        case_sensitive=False,  # 字段名不区分大小写
+        extra="ignore",  # 忽略未定义的环境变量
     )
 
-    # ====================== 应用基础配置 ======================
-    APP_NAME: str = "今日头条"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    # ==========================================================================
+    # 应用基础配置
+    # ==========================================================================
+    # 这些配置影响应用的基本行为，如名称显示、调试信息输出等
+    # ==========================================================================
 
-    # ====================== MySQL 配置 ======================
-    MYSQL_HOST: str = "127.0.0.1"
-    MYSQL_PORT: int = 3306
-    MYSQL_USER: str = "root"
-    MYSQL_PASSWORD: str = ""
-    MYSQL_DB_NAME: str = "news_app"
-    MYSQL_DB_POOL_SIZE: int = 20
-    MYSQL_DB_OVERFLOW: int = 40
+    APP_NAME: str = "今日头条"  # 应用名称，用于日志和界面显示
+    APP_VERSION: str = "1.0.0"  # 应用版本号
+    DEBUG: bool = True  # 调试模式：开启后打印 SQL、详细错误信息等
 
-    # ====================== Redis 配置 ======================
-    REDIS_HOST: str = "127.0.0.1"
-    REDIS_PORT: int = 6379
-    REDIS_DB: int = 0
-    REDIS_PASSWORD: str = ""
-    REDIS_MAX_CONNECTIONS: int = 50
+    # ==========================================================================
+    # MySQL 数据库配置
+    # ==========================================================================
+    # MySQL 是主数据库，存储用户、新闻、收藏等核心业务数据
+    # 连接 URL 由 MYSQL_DATABASE_URL 属性动态拼接
+    # ==========================================================================
 
-    # ====================== RabbitMQ 配置 ======================
-    RABBITMQ_HOST: str = "127.0.0.1"
-    RABBITMQ_PORT: int = 5672
-    RABBITMQ_USER: str = "guest"
-    RABBITMQ_PASSWORD: str = "guest"
-    RABBITMQ_VHOST: str = "/"
+    MYSQL_HOST: str = "127.0.0.1"  # 数据库主机地址
+    MYSQL_PORT: int = 3306  # 数据库端口
+    MYSQL_USER: str = "root"  # 数据库用户名
+    MYSQL_PASSWORD: str = ""  # 数据库密码（生产环境必须设置）
+    MYSQL_DB_NAME: str = "news_app"  # 数据库名称
+    MYSQL_DB_POOL_SIZE: int = 20  # 连接池大小：保持的活跃连接数
+    MYSQL_DB_OVERFLOW: int = 40  # 溢出连接数：临时创建的额外连接数
 
-    # ====================== 限流配置 ======================
-    RATE_LIMIT_PER_SECOND: int = 3
-    RATE_LIMIT_PER_MINUTE: int = 100
-    TOKEN_BUCKET_CAPACITY: int = 10
-    TOKEN_RATE: float = 5.0
-    RATE_LIMIT_DIMENSION: str = "combined"
+    # ==========================================================================
+    # Redis 缓存配置
+    # ==========================================================================
+    # Redis 用于：多级缓存、分布式锁、限流计数、会话存储
+    # 是高性能场景的关键基础设施
+    # ==========================================================================
 
-    # ====================== 防刷配置 ======================
-    IP_RATE_LIMIT: int = 60
-    USER_RATE_LIMIT: int = 100
-    MALICIOUS_THRESHOLD: int = 10
-    BLACKLIST_DURATION: int = 3600
-    SLIDING_WINDOW_SIZE: int = 60
-    ENABLE_LOCAL_FALLBACK: bool = True
-    RETRY_AFTER: int = 1
-    ENABLE_RATE_LIMIT_LOGGING: bool = True
+    REDIS_HOST: str = "127.0.0.1"  # Redis 主机地址
+    REDIS_PORT: int = 6379  # Redis 端口
+    REDIS_DB: int = 0  # Redis 数据库编号（0-15）
+    REDIS_PASSWORD: str = ""  # Redis 密码（生产环境建议设置）
+    REDIS_MAX_CONNECTIONS: int = 50  # 连接池最大连接数
 
-    # ====================== LLM / RAG 配置 ======================
-    RAG_PRELOAD_ON_STARTUP: bool = False
-    LLM_ANALYZE_MODEL: str = "Pro/MiniMaxAI/MiniMax-M2.5"
-    LLM_GENERATE_MODEL: str = "gpt-4o-mini"
-    OPENAI_API_KEY: str = ""
-    OPENAI_API_BASE: str = "https://api.openai.com/v1"
+    # ==========================================================================
+    # RabbitMQ 消息队列配置
+    # ==========================================================================
+    # RabbitMQ 用于 Celery 异步任务队列
+    # 新闻抓取、热度统计等耗时任务通过消息队列异步执行
+    # ==========================================================================
 
-    # ====================== 爬虫配置 ======================
-    SPIDER_FETCH_INTERVAL_HOURS: int = 6
-    SPIDER_NEWS_PER_SOURCE: int = 50
-    SPIDER_REQUEST_TIMEOUT: int = 30
-    SPIDER_MAX_RETRIES: int = 3
-    SPIDER_DEFAULT_CATEGORY_ID: int = 1
+    RABBITMQ_HOST: str = "127.0.0.1"  # RabbitMQ 主机地址
+    RABBITMQ_PORT: int = 5672  # RabbitMQ 端口
+    RABBITMQ_USER: str = "guest"  # RabbitMQ 用户名
+    RABBITMQ_PASSWORD: str = "guest"  # RabbitMQ 密码
+    RABBITMQ_VHOST: str = "/"  # RabbitMQ 虚拟主机
+
+    # ==========================================================================
+    # API 限流配置
+    # ==========================================================================
+    # 限流用于保护服务不被过量请求压垮
+    # 支持多种限流维度：IP、用户、全局限流
+    # ==========================================================================
+
+    RATE_LIMIT_PER_SECOND: int = 3  # 每秒最大请求数
+    RATE_LIMIT_PER_MINUTE: int = 100  # 每分钟最大请求数
+    TOKEN_BUCKET_CAPACITY: int = 10  # 令牌桶容量：最大突发流量
+    TOKEN_RATE: float = 5.0  # 令牌生成速率：每秒补充的令牌数
+    RATE_LIMIT_DIMENSION: str = "combined"  # 限流维度：ip/user/combined
+
+    # ==========================================================================
+    # 防刷配置
+    # ==========================================================================
+    # 防刷机制用于识别和阻止恶意请求
+    # 包括：IP 黑名单、请求频率监控、异常行为检测
+    # ==========================================================================
+
+    IP_RATE_LIMIT: int = 60  # 单 IP 每分钟最大请求数
+    USER_RATE_LIMIT: int = 100  # 单用户每分钟最大请求数
+    MALICIOUS_THRESHOLD: int = 10  # 恶意请求判定阈值
+    BLACKLIST_DURATION: int = 3600  # 黑名单持续时间（秒）
+    SLIDING_WINDOW_SIZE: int = 60  # 滑动窗口大小（秒）
+    ENABLE_LOCAL_FALLBACK: bool = True  # Redis 不可用时是否降级到本地限流
+    RETRY_AFTER: int = 1  # 限流响应中的 Retry-After 头（秒）
+    ENABLE_RATE_LIMIT_LOGGING: bool = True  # 是否记录限流日志
+
+    # ==========================================================================
+    # LLM / RAG 配置
+    # ==========================================================================
+    # 大语言模型用于智能问答功能
+    # RAG（检索增强生成）结合向量检索和 LLM 生成回答
+    # ==========================================================================
+
+    RAG_PRELOAD_ON_STARTUP: bool = False  # 启动时是否预热向量库
+    LLM_ANALYZE_MODEL: str = "Pro/MiniMaxAI/MiniMax-M2.5"  # 问题分析模型
+    LLM_GENERATE_MODEL: str = "gpt-4o-mini"  # 回答生成模型
+    OPENAI_API_KEY: str = ""  # OpenAI API 密钥
+    OPENAI_API_BASE: str = "https://api.openai.com/v1"  # API 基础 URL
+
+    # ==========================================================================
+    # 爬虫配置
+    # ==========================================================================
+    # 爬虫负责从外部网站抓取新闻数据
+    # 配置包括：抓取频率、单次数量、超时时间、分类规则
+    # ==========================================================================
+
+    SPIDER_FETCH_INTERVAL_HOURS: int = 6  # 抓取间隔（小时）
+    SPIDER_NEWS_PER_SOURCE: int = 50  # 每个数据源每次抓取的新闻数量
+    SPIDER_REQUEST_TIMEOUT: int = 30  # 请求超时时间（秒）
+    SPIDER_MAX_RETRIES: int = 3  # 最大重试次数
+    SPIDER_DEFAULT_CATEGORY_ID: int = 1  # 默认分类 ID
 
     @property
     def MYSQL_DATABASE_URL(self) -> str:
-        """拼接 SQLAlchemy 使用的 MySQL 连接串。
+        """拼接 SQLAlchemy 使用的 MySQL 异步连接串。
 
-        用属性而不是常量字段的原因是：
-        - 它依赖多项基础配置动态组合。
-        - 只要基础字段更新，这里就能自动反映，不需要手动同步多份值。
+        连接串格式：
+        mysql+aiomysql://user:password@host:port/database?charset=utf8mb4
+
+        为什么用属性而不是常量？
+        - 依赖多项基础配置动态组合
+        - 基础字段更新时自动反映，无需手动同步
+
+        Returns:
+            str: 完整的数据库连接 URL
         """
 
         return (
@@ -111,9 +206,21 @@ class Settings(BaseSettings):
     def SPIDER_CLASSIFICATION_RULES(self) -> dict[str, list[str]]:
         """返回爬虫新闻分类规则。
 
-        这些关键词用于把抓到的新闻粗略映射到业务分类中。
-        它不是机器学习模型，而是规则匹配，所以优点是简单直观，
-        缺点是精度受关键词质量影响较大。
+        这是一个基于关键词的简单分类器，用于把抓取到的新闻映射到业务分类。
+
+        工作原理：
+        ----------
+        1. 遍历每个分类的关键词列表
+        2. 统计新闻标题/内容中命中关键词的数量
+        3. 选择命中数最多的分类作为新闻分类
+
+        优缺点：
+        --------
+        - 优点：简单直观，无需训练模型，易于调试
+        - 缺点：精度受关键词质量影响，无法处理歧义
+
+        Returns:
+            dict[str, list[str]]: 分类名到关键词列表的映射
         """
 
         return {
@@ -131,21 +238,33 @@ class Settings(BaseSettings):
     def SPIDER_NEWS_SOURCES(self) -> list[dict[str, str | bool]]:
         """返回新闻抓取源配置。
 
-        这里没有把数据源写进数据库，而是先放在配置里，
-        是因为当前项目主要是教学与演示场景，固定配置更简单直接。
+        定义了爬虫从哪些网站抓取新闻，以及每个源的类型和状态。
+
+        数据源类型：
+        ------------
+        - json: API 接口，返回 JSON 格式数据
+        - rss: RSS 订阅源，返回 XML 格式数据
+
+        为什么放配置而不是数据库？
+        --------------------------
+        - 当前是教学演示项目，固定配置更简单
+        - 生产环境可迁移到数据库，支持动态增删
+
+        Returns:
+            list[dict[str, str | bool]]: 数据源配置列表
         """
 
         return [
             {
-                "name": "sina",
+                "name": "sina",  # 新浪新闻
                 "url": "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&k=&num={num}&page={page}",
-                "type": "json",
-                "enabled": True,
+                "type": "json",  # JSON API
+                "enabled": True,  # 是否启用
             },
             {
-                "name": "qq",
+                "name": "qq",  # 腾讯新闻
                 "url": "https://news.qq.com/rss/newsrss.xml",
-                "type": "rss",
+                "type": "rss",  # RSS 订阅
                 "enabled": True,
             },
         ]
@@ -153,10 +272,19 @@ class Settings(BaseSettings):
     @field_validator("DEBUG", mode="before")
     @classmethod
     def normalize_debug(cls, value):
-        """兼容多种 `DEBUG` 写法。
+        """兼容多种 DEBUG 环境变量写法。
 
-        用户机器上可能会把 `DEBUG` 写成 `release`、`prod`、`0` 这类值。
-        如果不做归一化，Pydantic 会把这些字符串当成非法布尔值，导致程序启动失败。
+        用户可能会用各种方式表示布尔值：
+        - 字符串：true/false、yes/no、on/off、1/0
+        - 环境名：debug/dev/development、release/prod/production
+
+        这个校验器把这些写法统一转换成 Python 布尔值。
+
+        Args:
+            value: 原始配置值
+
+        Returns:
+            bool: 标准化后的布尔值
         """
 
         if isinstance(value, str):
@@ -172,8 +300,19 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """返回全局唯一的配置实例。
 
-    配置基本属于“启动后只读”的数据，非常适合缓存成单例。
-    这样整个项目反复调用 `get_settings()` 时，不会重复解析 `.env` 文件。
+    使用 lru_cache 装饰器实现单例模式：
+    - 第一次调用时创建实例并缓存
+    - 后续调用直接返回缓存的实例
+    - 避免重复解析 .env 文件
+
+    为什么用单例？
+    --------------
+    - 配置在运行期间不会改变
+    - 避免重复 I/O 操作（读取 .env 文件）
+    - 保证整个应用使用同一份配置
+
+    Returns:
+        Settings: 全局配置实例
     """
 
     return Settings()

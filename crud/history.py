@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """浏览历史相关 CRUD。"""
 
 from __future__ import annotations
@@ -12,26 +13,15 @@ from models.news import News
 
 
 def _now() -> datetime:
-    """返回 naive UTC 时间。
-
-    `ViewHistory.view_time` 同样映射到普通 `DateTime` 字段。
-    为了避免历史记录更新时再次出现 naive/aware datetime 比较和落库不一致问题，
-    这里与用户 token 统一使用 naive UTC。
-    """
-
+    """返回 naive UTC 时间，避免时区问题。"""
     return datetime.utcnow()
 
 
 async def add_view_history(news_id: int, user_id: int, db: AsyncSession) -> ViewHistory:
-    """新增或刷新一条浏览历史。
+    """新增或刷新浏览历史。
 
-    数据库层通过 `(user_id, news_id)` 唯一约束保证同一用户对同一新闻只有一条记录。
-    因此这里的正确策略不是重复插入，而是：
-    1. 先查是否已存在。
-    2. 存在则只更新时间。
-    3. 不存在再插入新记录。
+    同一用户对同一新闻只保留一条记录，再次浏览时更新时间。
     """
-
     stmt = select(ViewHistory).where(
         ViewHistory.user_id == user_id,
         ViewHistory.news_id == news_id,
@@ -40,6 +30,7 @@ async def add_view_history(news_id: int, user_id: int, db: AsyncSession) -> View
     view_history = result.scalar_one_or_none()
 
     if view_history is not None:
+        # 已存在，更新时间
         now = _now()
         update_stmt = (
             update(ViewHistory)
@@ -50,10 +41,10 @@ async def add_view_history(news_id: int, user_id: int, db: AsyncSession) -> View
         await db.commit()
 
         if result.rowcount > 0:
-            # 同步刷新内存对象，保证当前请求返回的就是最新 view_time。
             view_history.view_time = now
         return view_history
 
+    # 不存在，新建记录
     user_view_history = ViewHistory(user_id=user_id, news_id=news_id)
     db.add(user_view_history)
     await db.commit()
@@ -67,12 +58,7 @@ async def get_view_history_list(
     page: int,
     page_size: int,
 ):
-    """分页查询用户浏览历史。
-
-    返回 `(total, rows)`，其中 `rows` 的每一项都是 `(News, viewTime)` 元组，
-    方便路由层直接组装响应结构。
-    """
-
+    """分页查询用户浏览历史，返回 (total, rows)。"""
     count_result = await db.execute(
         select(func.count(ViewHistory.news_id)).where(ViewHistory.user_id == user_id)
     )
@@ -92,7 +78,6 @@ async def get_view_history_list(
 
 async def delete_view_history(db: AsyncSession, history_id: int) -> bool:
     """删除指定历史记录。"""
-
     stmt = delete(ViewHistory).where(ViewHistory.id == history_id)
     result: AsyncResult = await db.execute(stmt)
     await db.commit()
@@ -101,7 +86,6 @@ async def delete_view_history(db: AsyncSession, history_id: int) -> bool:
 
 async def clear_view_history(db: AsyncSession, user_id: int) -> bool:
     """清空用户全部浏览历史。"""
-
     stmt = delete(ViewHistory).where(ViewHistory.user_id == user_id)
     result = await db.execute(stmt)
     await db.commit()

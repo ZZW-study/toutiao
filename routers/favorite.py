@@ -1,4 +1,8 @@
-"""收藏相关路由。"""
+# -*- coding: utf-8 -*-
+"""收藏相关路由。
+
+提供收藏的增删查接口。
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +29,6 @@ async def check_favorite(
     db: AsyncSession = Depends(get_db),
 ):
     """检查当前用户是否收藏指定新闻。"""
-
     is_favorite = await favorite.is_news_favorite(db, user.id, news_id)
     return success_response(
         message="检查收藏状态成功",
@@ -40,7 +43,6 @@ async def add_favorite(
     db: AsyncSession = Depends(get_db),
 ):
     """添加收藏。"""
-
     result = await favorite.add_news_favorite(db, user_id=user.id, news_id=data.news_id)
     return success_response(message="添加收藏成功", data=result)
 
@@ -52,7 +54,6 @@ async def remove_favorite(
     db: AsyncSession = Depends(get_db),
 ):
     """取消收藏。"""
-
     result = await favorite.remove_news_favorite(db, user_id=user.id, news_id=news_id)
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="收藏记录不存在")
@@ -67,7 +68,6 @@ async def get_favorite_list(
     db: AsyncSession = Depends(get_db),
 ):
     """分页获取当前用户收藏列表。"""
-
     rows, total = await favorite.get_favorite_list(db, user.id, page, page_size)
     favorite_list = [
         {
@@ -88,6 +88,5 @@ async def clear_favorite(
     db: AsyncSession = Depends(get_db),
 ):
     """清空当前用户全部收藏。"""
-
     count = await favorite.remove_all_favorites(db, user.id)
     return success_response(message=f"清空了{count}条记录")

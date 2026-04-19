@@ -1,4 +1,8 @@
-"""用户相关 CRUD 与认证逻辑。"""
+# -*- coding: utf-8 -*-
+"""用户相关 CRUD 与认证逻辑。
+
+提供用户的增删改查、登录认证、Token 管理等功能。
+"""
 
 from __future__ import annotations
 
@@ -14,31 +18,26 @@ from models.users import User, UserToken
 from schemas.users import UserRequest, UserUpdateRequest
 from utils import security
 
-# 路由层依赖这两个常量来决定返回语义，因此保留稳定文案。
+# 错误提示常量
 USER_NOT_FOUND = "用户不存在"
 INVALID_PASSWORD = "用户密码错误"
 
 
 def _now() -> datetime:
-    """返回 naive UTC 时间。
-
-    当前表结构中的 `expires_at` 也是普通 `DateTime` 字段，
-    统一使用 naive UTC 可以避免 sqlite/mysql 下出现 aware 与 naive 混比较问题。
-    """
-
+    """返回 naive UTC 时间，避免时区问题。"""
     return datetime.utcnow()
 
 
+# ---- 用户查询与创建 ----
+
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     """按用户名查询用户。"""
-
     result = await db.execute(select(User).where(User.username == username))
     return result.scalar_one_or_none()
 
 
 async def create_user(db: AsyncSession, user_data: UserRequest) -> User:
-    """创建用户并保存哈希密码。"""
-
+    """创建用户，密码加密后存储。"""
     hashed_password = security.get_hash_password(user_data.password)
     user = User(username=user_data.username, password=hashed_password)
     db.add(user)
@@ -47,15 +46,14 @@ async def create_user(db: AsyncSession, user_data: UserRequest) -> User:
     return user
 
 
+# ---- Token 管理 ----
+
 async def create_token(db: AsyncSession, user_id: int) -> str:
-    """创建或刷新登录 token。
-
-    项目当前仍然使用数据库保存的随机 token，因此这里统一做“单用户单 token”刷新。
-    """
-
+    """创建登录 Token，单用户单 Token 策略。"""
     token = str(uuid.uuid4())
     expires_at = _now() + timedelta(days=7)
 
+    # 查找是否已有 Token，有则刷新
     result = await db.execute(select(UserToken).where(UserToken.user_id == user_id))
     user_token = result.scalar_one_or_none()
 
@@ -70,17 +68,14 @@ async def create_token(db: AsyncSession, user_id: int) -> str:
     return token
 
 
+# ---- 认证与鉴权 ----
+
 async def authenticate_user(
     db: AsyncSession,
     username: str,
     password: str,
 ) -> User | str:
-    """校验用户名和密码。
-
-    这里移除了对 ORM 对象的缓存。
-    认证链路最重要的是正确性，直接查询数据库比缓存一个 `User ORM` 更稳妥。
-    """
-
+    """校验用户名和密码，成功返回 User，失败返回错误信息。"""
     user = await get_user_by_username(db, username)
     if user is None:
         return USER_NOT_FOUND
@@ -92,11 +87,7 @@ async def authenticate_user(
 
 
 async def get_user_id_by_token(db: AsyncSession, token: str) -> int | None:
-    """根据 token 解析用户 ID。
-
-    这个轻量查询专门给限流和认证上下文复用，避免无意义地把整张用户记录都查出来。
-    """
-
+    """根据 Token 解析用户 ID，用于限流和认证上下文。"""
     result = await db.execute(
         select(UserToken.user_id, UserToken.expires_at).where(UserToken.token == token)
     )
@@ -110,8 +101,7 @@ async def get_user_id_by_token(db: AsyncSession, token: str) -> int | None:
 
 
 async def get_user_by_token(db: AsyncSession, token: str) -> User | None:
-    """根据 token 获取当前登录用户。"""
-
+    """根据 Token 获取当前登录用户。"""
     stmt = (
         select(User)
         .join(UserToken, UserToken.user_id == User.id)
@@ -121,13 +111,14 @@ async def get_user_by_token(db: AsyncSession, token: str) -> User | None:
     return result.scalar_one_or_none()
 
 
+# ---- 用户资料更新 ----
+
 async def update_user(
     db: AsyncSession,
     username: str,
     user_data: UserUpdateRequest,
 ) -> User:
-    """更新用户资料。"""
-
+    """更新用户资料，更新后失效相关缓存。"""
     result = await db.execute(
         update(User)
         .where(User.username == username)
@@ -138,7 +129,7 @@ async def update_user(
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
 
-    # 这里保留缓存失效逻辑，确保后续如果重新接入用户信息缓存不会读到旧值。
+    # 失效相关缓存
     await multi_level_cache.delete(f"user:auth:{username}")
     await multi_level_cache.delete(f"user:by_username:{username}")
 
@@ -154,8 +145,7 @@ async def change_password(
     old_password: str,
     new_password: str,
 ) -> bool:
-    """修改密码。"""
-
+    """修改密码，成功后失效用户缓存。"""
     if not security.verify_password(old_password, user.password):
         return False
 
@@ -167,4 +157,3 @@ async def change_password(
     await multi_level_cache.delete(f"user:info:{user.id}")
     await multi_level_cache.delete(f"user:auth:{user.username}")
     return True
-

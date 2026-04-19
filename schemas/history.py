@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """浏览历史模块的请求与响应模型。"""
 
 from __future__ import annotations
@@ -10,13 +11,13 @@ from schemas.base import NewsItemBase
 
 
 class ViewHistoryAddRequest(BaseModel):
-    """新增一条浏览历史时的请求体。"""
+    """新增浏览历史请求体。"""
 
     news_id: int = Field(..., alias="newsId")
 
 
 class ViewHistoryResponse(BaseModel):
-    """单条浏览历史记录的基础响应体。"""
+    """单条浏览历史记录响应体。"""
 
     id: int = Field(...)
     user_id: int = Field(..., alias="userId")
@@ -30,7 +31,7 @@ class ViewHistoryResponse(BaseModel):
 
 
 class ViewHistory(NewsItemBase):
-    """浏览历史列表中的单条新闻项。"""
+    """浏览历史列表中的新闻项，继承基础字段并补充浏览时间。"""
 
     view_time: datetime = Field(..., alias="viewTime")
 
@@ -41,7 +42,7 @@ class ViewHistory(NewsItemBase):
 
 
 class ViewHistoryListResponse(BaseModel):
-    """浏览历史列表接口响应体。"""
+    """浏览历史列表响应体。"""
 
     list: list[ViewHistory]
     total: int = Field(...)

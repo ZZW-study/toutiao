@@ -1,4 +1,8 @@
-"""用户相关 HTTP 路由。"""
+# -*- coding: utf-8 -*-
+"""用户相关 HTTP 路由。
+
+提供注册、登录、用户信息查询和修改等接口。
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +30,7 @@ router = APIRouter(
 
 @router.post("/register")
 async def register(user_data: UserRequest, db: AsyncSession = Depends(get_db)):
-    """注册用户并直接返回登录态。"""
-
+    """注册用户并返回登录态。"""
     existing_user = await users.get_user_by_username(db, user_data.username)
     if existing_user is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户已存在")
@@ -44,7 +47,6 @@ async def register(user_data: UserRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/login")
 async def login(user_data: UserRequest, db: AsyncSession = Depends(get_db)):
     """用户名密码登录。"""
-
     user = await users.authenticate_user(db, user_data.username, user_data.password)
 
     if user == users.USER_NOT_FOUND:
@@ -64,7 +66,6 @@ async def login(user_data: UserRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/info")
 async def get_user_info(user: User = Depends(get_current_user)):
     """获取当前登录用户信息。"""
-
     return success_response(message="获取用户信息成功", data=UserInfoResponse.model_validate(user))
 
 
@@ -75,7 +76,6 @@ async def update_user_info(
     db: AsyncSession = Depends(get_db),
 ):
     """更新当前用户资料。"""
-
     updated_user = await users.update_user(db, user.username, user_data)
     return success_response(
         message="更新用户信息成功",
@@ -90,7 +90,6 @@ async def update_password(
     db: AsyncSession = Depends(get_db),
 ):
     """修改当前用户密码。"""
-
     changed = await users.change_password(
         db,
         user,

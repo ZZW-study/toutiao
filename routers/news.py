@@ -1,4 +1,8 @@
-"""新闻相关路由。"""
+# -*- coding: utf-8 -*-
+"""新闻相关路由。
+
+提供新闻分类、列表、详情等接口。
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +30,6 @@ async def get_news_categories(
     limit: int = 100,
 ):
     """获取新闻分类列表。"""
-
     categories = await news.get_categories(db, skip, limit)
     return success_response(message="获取分类成功", data=categories)
 
@@ -39,7 +42,6 @@ async def get_news_list(
     page_size: int = Query(10, le=100, alias="pageSize"),
 ):
     """分页获取新闻列表。"""
-
     offset = (page - 1) * page_size
     news_list = await news.get_news_list(db, category_id, offset, page_size)
     total = await news.get_news_count(db, category_id)
@@ -56,19 +58,21 @@ async def get_news_detail(
     db: AsyncSession = Depends(get_db),
     news_id: int = Query(..., alias="id"),
 ):
-    """获取新闻详情并补充相关推荐。"""
-
+    """获取新闻详情，同时递增浏览量并返回相关推荐。"""
+    # 递增浏览量
     views_updated = await news.increase_news_views(db, news_id)
     if not views_updated:
         raise HTTPException(status_code=404, detail="更新新闻浏览量失败")
 
+    # 获取详情
     news_detail = await news.get_news_detail(db, news_id)
     if not news_detail:
         raise HTTPException(status_code=404, detail="新闻不存在")
 
+    # 获取相关推荐
     related_news = await news.get_related_news(db, news_id, news_detail["category_id"])
 
-    # 异步任务只是附加增强能力，失败时不能影响主接口。
+    # 异步派发热度和行为统计任务
     try:
         increase_news_popularity.delay(news_id, 1)
     except Exception as exc:

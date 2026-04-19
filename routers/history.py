@@ -1,4 +1,8 @@
-"""浏览历史相关路由。"""
+# -*- coding: utf-8 -*-
+"""浏览历史相关路由。
+
+提供浏览历史的增删查接口。
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,8 +32,7 @@ async def add_view_history(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """新增或刷新当前用户的浏览历史。"""
-
+    """新增或刷新浏览历史。"""
     user_view_history = await history.add_view_history(
         db=db,
         news_id=news_id.news_id,
@@ -49,7 +52,6 @@ async def get_view_history_list(
     page_size: int = Query(10, ge=1, le=100, alias="pageSize"),
 ):
     """分页获取浏览历史。"""
-
     total, view_history_rows = await history.get_view_history_list(
         db=db,
         user_id=user.id,
@@ -77,7 +79,6 @@ async def delete_view_history(
     db: AsyncSession = Depends(get_db),
 ):
     """删除单条浏览历史。"""
-
     has_delete = await history.delete_view_history(db=db, history_id=history_id)
     if not has_delete:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="历史记录不存在")
@@ -90,7 +91,6 @@ async def clear_view_history_list(
     db: AsyncSession = Depends(get_db),
 ):
     """清空当前用户的全部浏览历史。"""
-
     has_clear = await history.clear_view_history(db=db, user_id=user.id)
     if not has_clear:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览历史记录不存在")
