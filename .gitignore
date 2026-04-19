@@ -1,11 +1,52 @@
+# Python 缓存文件
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+*.egg-info/
+*.egg
+
+# 虚拟环境&密钥配置
 venv/
 env/
+ENV/
 .env
+.env.local
+.env.*.local
+config.ini
+secret.json
+
+# 日志&临时缓存
+logs/
+*.log
+cache/
+temp/
+tmp/
+
+# 编辑器&系统垃圾
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 .DS_Store
-*.log
+Thumbs.db
+
+# 数据库&大文件
+*.db
+*.sqlite3
+*.pth
+*.bin
+*.ckpt
+*.zip
+*.rar
+*.tar.gz
+data/
