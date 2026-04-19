@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 """统计业务异步任务，包含热门新闻刷新、用户行为收集。"""
 
-from middlewares.celery import celery_app
+from middlewares import celery_app
 from utils.logger import get_logger
 
 logger = get_logger(name="StatisticsTasks")
 
 
-@celery_app.task(
-    name="tasks.statistics_tasks.refresh_hot_news",
-    queue="statistics"
-)
+@celery_app.task(name="tasks.statistics_tasks.refresh_hot_news")
 def refresh_hot_news():
     """定时刷新热门新闻榜单。"""
     try:
@@ -23,7 +20,6 @@ def refresh_hot_news():
 
 @celery_app.task(
     name="tasks.statistics_tasks.collect_user_behavior",
-    queue="statistics",
     rate_limit="500/m"
 )
 def collect_user_behavior(user_id: int, action: str, news_id: int):

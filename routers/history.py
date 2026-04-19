@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.db import get_db
 from crud import history
-from middlewares.token_bucket_rate_limit import rate_limit_dependency
 from models.users import User
 from schemas.history import (
     ViewHistoryAddRequest,
@@ -22,7 +21,6 @@ from utils.response import success_response
 router = APIRouter(
     prefix="/api/history",
     tags=["history"],
-    dependencies=[Depends(rate_limit_dependency)],
 )
 
 

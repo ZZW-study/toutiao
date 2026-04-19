@@ -43,21 +43,24 @@ class LocalLRUCache:
     """
 
     def __init__(self, maxsize: int = 1000, ttl: int = 300) -> None:
-        self.maxsize = maxsize
-        self.ttl = ttl
-        self._cache: "OrderedDict[Any, _StoredValue]" = OrderedDict()
-        self._lock = RLock()
-        self._empty_marker = EMPTY_CACHE_FLAG
+        self.maxsize = maxsize  # 最大容量，超过时 LRU 淘汰
+        self.ttl = ttl          # 默认过期时间（秒）
+        self._cache: "OrderedDict[Any, _StoredValue]" = OrderedDict()  # 有序字典维护 LRU 顺序
+        # 涉及到多个线程并发的内存数据操作、数据库数据操作，反正是跟数据有关的操作
+        # 一定要锁，因为过程是这样的cpu先拿数据-->执行计算-->写入数据，很多更新的、删除的函数，其实是这三个过程。
+        # 如果不能一气呵成，会出现超级多数据的问题。
+        self._lock = RLock()  # 可重入锁：同一线程可多次 acquire 不会死锁，适合方法间嵌套调用，下面的代码有个多个嵌套调用，然后嵌套的调用的函数，都需要获得到，所有可重入锁非常重要。
+        self._empty_marker = EMPTY_CACHE_FLAG  # 负缓存标记，区分 None 值和未命中
 
         # 统计字段
-        self.hit_count = 0
-        self.miss_count = 0
-        self.total_count = 0
+        self.hit_count = 0  # 命中次数
+        self.miss_count = 0  # 未命中次数
+        self.total_count = 0  # 总请求次数
 
         self.logger = get_logger(name="LocalLRUCache")
 
     def _now(self) -> float:
-        """返回单调时钟时间，避免系统时间回拨影响。"""
+        """返回单调时钟时间，返回一个安全、可靠、只增不减的计时用时间戳，避免系统时间回拨影响。"""
         return time.monotonic()
 
     def _purge_expired_locked(self) -> None:
@@ -72,8 +75,7 @@ class LocalLRUCache:
     def _ensure_capacity_locked(self) -> None:
         """写入后执行 LRU 淘汰。"""
         while len(self._cache) > self.maxsize:
-            evicted_key, _ = self._cache.popitem(last=False)
-            self.logger.debug("本地缓存触发 LRU 淘汰", key=evicted_key)
+            self._cache.popitem(last=False)
 
     def get_entry(self, key: Any) -> LocalCacheEntry:
         """返回带命中状态的读取结果。"""

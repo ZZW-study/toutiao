@@ -25,7 +25,7 @@ async def get_categories(db: AsyncSession, skip: int = 0, limit: int = 100):
     return jsonable_encoder(categories) if categories else []
 
 
-@multi_cache(key_prefix="news:list", expire=1800)
+@multi_cache(key_prefix="news:list", expire=1800,hot=False)
 async def get_news_list(
     db: AsyncSession,
     category_id: int,

@@ -6,7 +6,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from agents.graph import get_agent_runner
-from middlewares.token_bucket_rate_limit import rate_limit_dependency
 from schemas.chat import ChatRequest, ChatResponse, NewsItem
 from utils.logger import get_logger
 
@@ -15,7 +14,6 @@ logger = get_logger(name="ChatRouter")
 router = APIRouter(
     prefix="/chat",
     tags=["智能问答"],
-    dependencies=[Depends(rate_limit_dependency)],
 )
 
 

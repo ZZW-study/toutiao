@@ -5,7 +5,7 @@
 在 Celery worker 中执行异步抓取逻辑，抓取结果交由 crud.news_spider 持久化。
 """
 
-from middlewares.celery import celery_app
+from middlewares import celery_app
 from services.news_spider import NewsSpiderService
 from crud.news_spider import NewsSpiderCRUD
 from configs.db import AsyncSessionLocal
@@ -16,7 +16,6 @@ logger = get_logger(name="NewsSpiderTasks")
 
 @celery_app.task(
     name="tasks.news_spider_tasks.fetch_and_save_news",
-    queue="news",
     bind=True,
     max_retries=3,
     default_retry_delay=300
@@ -51,10 +50,7 @@ def fetch_and_save_news(self):
         loop.close()
 
 
-@celery_app.task(
-    name="tasks.news_spider_tasks.fetch_sina_news",
-    queue="news"
-)
+@celery_app.task(name="tasks.news_spider_tasks.fetch_sina_news")
 def fetch_sina_news():
     """单独抓取新浪新闻"""
     import asyncio
@@ -79,10 +75,7 @@ def fetch_sina_news():
         loop.close()
 
 
-@celery_app.task(
-    name="tasks.news_spider_tasks.fetch_qq_news",
-    queue="news"
-)
+@celery_app.task(name="tasks.news_spider_tasks.fetch_qq_news")
 def fetch_qq_news():
     """单独抓取腾讯新闻"""
     import asyncio

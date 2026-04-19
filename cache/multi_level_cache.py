@@ -155,7 +155,3 @@ def multi_cache(
         return wrapper
 
     return decorator
-
-
-# 兼容旧拼写
-MutiLevelCache = MultiLevelCache

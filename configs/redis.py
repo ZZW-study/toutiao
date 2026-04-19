@@ -1,42 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Redis 资源初始化模块。
-
-本模块负责创建和管理 Redis 连接资源，为缓存、分布式锁、限流等功能提供基础设施。
-
-核心职责：
------------
-1. 定义 Redis 连接配置（主机、端口、密码、连接池大小等）
-2. 创建连接池和异步 Redis 客户端
-3. 提供分布式锁安全释放脚本（Lua 脚本）
-
-为什么单独拆分这个模块？
------------------------
-- 配置（settings.py）只负责读取环境变量
-- 资源模块（本文件）负责创建运行时对象
-- 职责分离让代码更清晰，也便于测试和替换实现
-
-Redis 在本项目中的应用场景：
----------------------------
-1. 多级缓存：作为二级缓存，存储热点数据（L1 是本地内存缓存）
-2. 分布式锁：防止并发场景下的重复操作（如重复抓取新闻）
-3. 限流计数：配合令牌桶算法实现 API 限流
-4. 会话存储：可选的会话后端
-
-使用示例：
-----------
-# 直接使用全局客户端
-from configs.redis import redis_client
-await redis_client.set("key", "value", ex=300)
-
-# 在缓存模块中使用
-from configs.redis import redis_client
-result = await redis_client.get("cache:user:123")
-"""
+"""Redis 资源初始化模块。"""
 
 from __future__ import annotations
 
 from typing import TypeVar
-
 import redis.asyncio as redis
 from redis.commands.core import Script
 
@@ -44,14 +11,6 @@ from configs.settings import get_settings
 
 T = TypeVar("T")
 settings = get_settings()
-
-
-# ==============================================================================
-# Redis 运行期配置聚合
-# ==============================================================================
-# 把分散在 settings 中的 Redis 相关配置集中管理
-# 包含连接参数和业务调优参数两类
-# ==============================================================================
 
 class RedisConfig:
     """Redis 运行期配置聚合类。
@@ -72,10 +31,7 @@ class RedisConfig:
     - HEALTH_CHECK_INTERVAL: 健康检查间隔（秒），定期检测连接是否存活
     - SOCKET_KEEPALIVE: 是否启用 TCP Keep-Alive，防止连接被中间设备断开
     - CACHE_RANDOM_OFFSET: 缓存过期随机偏移（秒），防止缓存雪崩
-    - LOCK_EXPIRE: 分布式锁默认过期时间（秒）
-    - MAX_RETRY: 最大重试次数
-    - EMPTY_CACHE_FLAG: 空缓存标记过期时间（秒），防止缓存穿透
-    - CIRCUIT_BREAKER: 是否启用熔断器
+    - EMPTY_CACHE_EXPIRE: 空缓存标记过期时间（秒），防止缓存穿透
     """
 
     # 连接参数：从环境变量读取
@@ -86,16 +42,13 @@ class RedisConfig:
     MAX_CONNECTIONS = settings.REDIS_MAX_CONNECTIONS or 50
 
     # 超时与健康检查
-    TIMEOUT = 5  # 命令执行超时 5 秒
-    HEALTH_CHECK_INTERVAL = 30  # 每 30 秒检查一次连接健康状态
-    SOCKET_KEEPALIVE = True  # 启用 TCP Keep-Alive
+    TIMEOUT = 5  
+    HEALTH_CHECK_INTERVAL = 30 
+    SOCKET_KEEPALIVE = True  
 
     # 业务调优参数
-    CACHE_RANDOM_OFFSET = 300  # 缓存过期时间随机偏移 5 分钟，防止大量 key 同时过期
-    LOCK_EXPIRE = 5  # 分布式锁默认 5 秒后自动释放
-    MAX_RETRY = 5  # 操作失败最多重试 5 次
-    EMPTY_CACHE_FLAG = 60  # 空值缓存 60 秒，防止缓存穿透
-    CIRCUIT_BREAKER = True  # 启用熔断器，连续失败后快速失败
+    CACHE_RANDOM_OFFSET = 300   # 缓存过期时间随机偏移 5 分钟，防止大量 key 同时过期
+    EMPTY_CACHE_EXPIRE = 60     # 空值缓存 60 秒，防止缓存穿透
 
 
 # ==============================================================================
@@ -118,16 +71,16 @@ redis_pool = redis.ConnectionPool(
     port=RedisConfig.PORT,
     db=RedisConfig.DB,
     password=RedisConfig.PASSWORD,
-    max_connections=RedisConfig.MAX_CONNECTIONS,  # 最大连接数 50
-    decode_responses=True,  # 自动解码 bytes -> str
-    socket_timeout=RedisConfig.TIMEOUT,  # 命令超时 5 秒
-    socket_connect_timeout=RedisConfig.TIMEOUT,  # 连接超时 5 秒
+    max_connections=RedisConfig.MAX_CONNECTIONS,    # 最大连接数 50
+    decode_responses=True,                          # 自动解码 bytes -> str
+    socket_timeout=RedisConfig.TIMEOUT,             # 命令超时 5 秒
+    socket_connect_timeout=RedisConfig.TIMEOUT,     # 连接超时 5 秒
     socket_keepalive=RedisConfig.SOCKET_KEEPALIVE,  # 启用 TCP Keep-Alive
-    health_check_interval=RedisConfig.HEALTH_CHECK_INTERVAL,  # 健康检查间隔 30 秒
-    retry_on_timeout=True,  # 超时自动重试
+    health_check_interval=RedisConfig.HEALTH_CHECK_INTERVAL,    # 健康检查间隔 30 秒
+    retry_on_timeout=True,                                      # 超时自动重试
 )
 
-# 全局异步 Redis 客户端
+
 # 所有需要 Redis 的地方都应该使用这个客户端，而不是创建新连接
 redis_client: redis.Redis = redis.Redis(connection_pool=redis_pool)
 

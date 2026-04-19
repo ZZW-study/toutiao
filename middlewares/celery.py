@@ -9,7 +9,7 @@ logger = get_logger(name="Celery")
 
 
 def create_celery_app() -> Celery:
-    """创建并初始化 Celery 应用，就是创建Celery实例类"""
+    """创建并初始化 Celery 应用，就是创建Celery实例类-->加载配置-->加载任务"""
     # 以 "toutiao" 为名创建实例，从统一配置模块加载参数，并自动发现 tasks 包下的任务
     app = Celery("toutiao")
 

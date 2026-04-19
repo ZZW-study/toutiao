@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.db import get_db
 from crud import favorite
-from middlewares.token_bucket_rate_limit import rate_limit_dependency
 from models.users import User
 from schemas.favorite import FavoriteAddRequest, FavoriteCheckResponse, FavoriteListResponse
 from utils.auth import get_current_user
@@ -18,7 +17,6 @@ from utils.response import success_response
 router = APIRouter(
     prefix="/api/favorite",
     tags=["favorite"],
-    dependencies=[Depends(rate_limit_dependency)],
 )
 
 

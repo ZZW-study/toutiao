@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.db import get_db
 from crud import users
-from middlewares.token_bucket_rate_limit import rate_limit_dependency
 from models.users import User
 from schemas.users import (
     UserAuthResponse,
@@ -24,7 +23,6 @@ from utils.response import success_response
 router = APIRouter(
     prefix="/api/user",
     tags=["users"],
-    dependencies=[Depends(rate_limit_dependency)],
 )
 
 
