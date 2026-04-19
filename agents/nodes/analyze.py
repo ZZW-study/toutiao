@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents.services import get_analyze_service
+from toutiao.agents.services.services import get_analyze_service
 from agents.state import AgentState
 
 

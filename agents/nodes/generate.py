@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents.services import get_generate_service
+from toutiao.agents.services.services import get_generate_service
 from agents.state import AgentState
 
 MAX_AGENT_LOOPS = 3
