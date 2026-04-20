@@ -75,7 +75,6 @@ class NewsQaAgentRunner:
     async def ainvoke(
         self,
         initial_state: dict[str, Any],
-        session_id: str | None = None,
     ) -> dict[str, Any]:
         """执行工作流。
 

@@ -12,18 +12,15 @@
 # 客户端 IP、Cookie 等
 # 你可以在自己的路由函数或中间件中声明一个参数类型为 Request，FastAPI 就会自动把当前请求的对象传进来。
 from fastapi import Request, status
-from starlette.middleware.base import BaseHTTPMiddleware  
-# Starlette 是 FastAPI 的底层基础框架，FastAPI 基于 Starlette 构建并扩展了数据验证、文档等功能。
-# Starlette 提供的中间件基类，继承后只需重写 async def dispatch(self, request, call_next)
-# 即可在每个请求进入路由前/后插入自定义逻辑（如限流、日志、认证）
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+from configs.redis import redis_client
+from configs.settings import get_settings
+from middlewares.rate_limit import token_limit
+from utils.logger import get_logger
 
-from starlette.responses import JSONResponse              
-from configs.redis import redis_client          
-from middlewares.rate_limit import token_limit  
-from utils.logger import get_logger            
-
-# 初始化当前模块的日志记录器，name 用于区分不同模块的日志
 logger = get_logger(name="TokenBucketMiddleware")
+settings = get_settings()
 
 
 class TokenBucketRateLimitMiddleware(BaseHTTPMiddleware):
@@ -47,7 +44,12 @@ class TokenBucketRateLimitMiddleware(BaseHTTPMiddleware):
             redis_key = f"rl:{client_ip}"
 
             # 调用令牌桶限流核心函数，返回限流结果
-            result = await token_limit(redis_client, redis_key)
+            result = await token_limit(
+                redis_client,
+                redis_key,
+                capacity=settings.TOKEN_BUCKET_CAPACITY,
+                rate=settings.TOKEN_BUCKET_RATE,
+            )
 
             # 如果不允许通过（桶内令牌不足）
             if not result.allowed:

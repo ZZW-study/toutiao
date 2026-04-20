@@ -31,38 +31,7 @@ from utils.repr_return import generate_repr
 
 
 class Favorite(Base):
-    """用户收藏关系表模型。
-
-    记录用户收藏新闻的关系，是典型的"用户-内容"关系表。
-
-    表名：favorite
-
-    字段说明：
-    ----------
-    id: 收藏记录 ID，主键自增
-    user_id: 用户 ID，外键关联 User 表
-    news_id: 新闻 ID，外键关联 News 表
-    created_at: 收藏时间
-
-    约束设计：
-    ----------
-    - user_news_unique: (user_id, news_id) 唯一约束
-      - 防止同一用户重复收藏同一篇新闻
-      - 业务层需要处理"已收藏"的情况
-
-    索引设计：
-    ----------
-    - fk_favorite_user_idx: user_id 索引
-      - 加速查询"用户收藏列表"
-      - 高频查询场景
-    - fk_favorite_news_idx: news_id 索引
-      - 加速查询"新闻被收藏次数"
-      - 支持热门新闻统计
-
-    为什么不继承 TimestampMixin？
-    - 只需要记录收藏时间，不需要更新时间
-    - 收藏记录不会被"更新"，只有新增和删除
-    """
+    """用户收藏关系表模型。"""
 
     __tablename__ = "favorite"
 

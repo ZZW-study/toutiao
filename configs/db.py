@@ -1,43 +1,11 @@
 # -*- coding: utf-8 -*-
 """数据库资源初始化模块。
-
 本模块负责创建和管理数据库连接资源，是整个应用数据访问层的基础设施。
-
-核心职责：
------------
-1. 创建异步数据库引擎（AsyncEngine）
-   - 管理连接池，复用数据库连接，避免频繁创建/销毁连接的开销
-   - 配置连接超时、连接回收等参数，保证连接稳定性
-
-2. 创建会话工厂（async_sessionmaker）
-   - 每个请求通过工厂获取独立的数据库会话
-   - 会话隔离确保不同请求的事务不会互相干扰
-
-3. 提供 FastAPI 依赖注入函数 get_db
-   - 自动管理会话生命周期：创建 -> 使用 -> 提交/回滚 -> 关闭
-   - 异常时自动回滚，保证数据一致性
-
-设计说明：
-----------
-为什么不把数据库引擎放在 settings.py 里？
-- settings.py 只负责"配置值"的读取和校验，属于静态数据
-- 数据库引擎是"运行时资源"，需要管理连接池、处理超时等动态行为
-- 职责分离让代码更清晰，也便于测试时 mock
-
-使用示例：
-----------
-在路由中通过依赖注入使用：
-
-    @router.get("/users/{user_id}")
-    async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
-        result = await db.execute(select(User).where(User.id == user_id))
-        return result.scalar_one_or_none()
 """
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from configs.settings import get_settings
 
 settings = get_settings()
@@ -46,14 +14,12 @@ settings = get_settings()
 # 格式：mysql+aiomysql://user:password@host:port/database?charset=utf8mb4
 ASYNC_DATABASE_URL = settings.MYSQL_DATABASE_URL
 
-
-
 async_engine = create_async_engine(
     url=ASYNC_DATABASE_URL,
     echo=settings.DEBUG,  # 调试模式下打印 SQL
     pool_size=settings.MYSQL_DB_POOL_SIZE,  # 连接池大小：20
     max_overflow=settings.MYSQL_DB_OVERFLOW,  # 溢出连接数：40，最大连接数 = 20 + 40 = 60
-    pool_timeout=30,  # 获取连接超时 30 秒
+    pool_timeout=30,    # 获取连接超时 30 秒
     pool_recycle=3600,  # 连接回收时间 1 小时，防止 MySQL wait_timeout 断连
     pool_pre_ping=True,  # 使用前检测连接健康状态
     connect_args={

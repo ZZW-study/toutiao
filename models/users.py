@@ -31,34 +31,7 @@ from utils.repr_return import generate_repr
 
 
 class User(Base, TimestampMixin):
-    """用户主表模型。
-
-    存储用户注册后的基础资料，是用户系统的核心表。
-
-    表名：user
-
-    字段说明：
-    ----------
-    id: 用户 ID，主键自增
-    username: 用户名，唯一，用于登录
-    password: 密码，存储 bcrypt 加密后的哈希值
-    nickname: 昵称，显示名称，可选
-    avatar: 头像 URL，有默认图片
-    gender: 性别，枚举值 male/female/unknown
-    bio: 个人简介，可选
-    phone: 手机号，唯一，可选
-
-    索引设计：
-    ----------
-    - username_UNIQUE: 用户名唯一索引，加速登录查询
-    - phone_UNIQUE: 手机号唯一索引，防止重复绑定
-
-    继承说明：
-    ----------
-    继承 TimestampMixin 获得：
-    - created_at: 注册时间
-    - updated_at: 资料更新时间
-    """
+    """用户主表模型。"""
 
     __tablename__ = "user"
 
@@ -87,30 +60,7 @@ class User(Base, TimestampMixin):
 
 
 class UserToken(Base):
-    """用户登录令牌表模型。
-
-    管理用户的登录状态，支持：
-    - 多设备登录：一个用户可以有多个有效令牌
-    - 令牌过期：通过 expires_at 控制有效期
-    - 主动失效：服务端可以删除令牌强制下线
-
-    表名：user_token
-
-    字段说明：
-    ----------
-    id: 令牌 ID，主键自增
-    user_id: 用户 ID，外键关联 User 表
-    token: 令牌值，通常是随机生成的字符串
-    expires_at: 过期时间，令牌在此时间后失效
-    created_at: 创建时间，记录登录时间
-
-    为什么需要令牌表？
-    ------------------
-    - 无状态 JWT vs 有状态令牌：
-      - JWT 不需要存储，但无法主动失效
-      - 数据库令牌可以主动删除，实现强制下线
-    - 本项目选择数据库令牌，安全性更高
-    """
+    """用户登录令牌表模型。"""
 
     __tablename__ = "user_token"
 

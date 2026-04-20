@@ -50,7 +50,7 @@ logger = get_logger(name="NewsRouter")
 # Cookie：本地存储的网站数据（如果有）
 # 以及很多浏览器自动添加的头部（如 Sec-Fetch-* 等安全相关头）
 
-# skip 和 limit：是查询参数（Query Parameters），FastAPI 默认会将非依赖项的简单类型参数（如 int、str）视为查询参数。
+# skip 和 limit：是查询参数（Query Parameters）
 @router.get("/categories")
 async def get_news_categories(
     db: AsyncSession = Depends(get_db),

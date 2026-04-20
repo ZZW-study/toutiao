@@ -25,7 +25,21 @@ router = APIRouter(
     tags=["users"],
 )
 
-
+# 1. 参数来源识别
+# 当你在路由函数中声明一个参数（如 user_data: UserRequest）时，FastAPI 会按照固定顺序判断该参数应该从请求的哪个部分提取：
+# 路径参数：如果参数名与路由路径中的 {变量} 同名 → 从 URL 路径提取
+# 查询参数：如果不是路径参数，且为普通 Python 类型（如 str, int, bool 等）→ 从 URL 查询字符串提取
+# 请求体参数：如果不是以上两种，且该类型是 Pydantic 模型（或 list, dict 等其他可解析类型）→ 从请求体（Body）中提取
+# 因此，user_data: UserRequest 会被 FastAPI 自动判定为请求体参数，无需显式使用 Body(...)。
+# 2. 自动解析 JSON 并校验
+# 当请求到达时，FastAPI 会：
+# 读取 request.json() 获取请求体的 JSON 数据
+# 使用 UserRequest 这个 Pydantic 模型的 model_validate(json_data) 方法进行：
+# 类型转换（如字符串转数字、日期时间）
+# 字段验证（如 @field_validator、EmailStr、constraints 等）
+# 嵌套模型解析
+# 如果校验通过，生成一个 UserRequest 实例注入到 user_data 参数中
+# 如果校验失败（缺少必填字段、类型错误、格式错误等），FastAPI 会自动返回 422 Unprocessable Entity 响应，并附带详细的错误信息（哪个字段、什么原因）
 @router.post("/register")
 async def register(user_data: UserRequest, db: AsyncSession = Depends(get_db)):
     """注册用户并返回登录态。"""

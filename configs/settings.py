@@ -1,45 +1,5 @@
 # -*- coding: utf-8 -*-
-"""项目统一配置中心。
-
-本模块是整个应用的配置管理核心，基于 Pydantic Settings 实现类型安全的配置管理。
-
-核心职责：
------------
-1. 集中管理所有配置项
-   - 数据库连接参数（MySQL、Redis、RabbitMQ）
-   - 业务参数（限流、爬虫、LLM）
-   - 环境相关配置（调试模式、API 密钥）
-
-2. 自动读取环境变量
-   - 优先从 .env 文件读取
-   - 支持默认值，无 .env 也能运行
-   - 类型自动转换和校验
-
-3. 提供计算属性
-   - 数据库连接 URL（动态拼接）
-   - 爬虫分类规则（关键词映射）
-   - 新闻源配置（数据源列表）
-
-设计理念：
-----------
-为什么用 Pydantic Settings？
-- 类型安全：配置项有明确类型，启动时就能发现配置错误
-- 环境隔离：开发/测试/生产环境通过不同 .env 文件区分
-- 文档友好：每个配置项都有注释，新成员容易理解
-
-配置加载顺序：
---------------
-1. 类字段默认值
-2. .env 文件中的值（覆盖默认值）
-3. 环境变量中的值（覆盖 .env）
-
-使用示例：
-----------
-from configs.settings import get_settings
-settings = get_settings()
-print(settings.MYSQL_HOST)  # 访问配置项
-print(settings.MYSQL_DATABASE_URL)  # 访问计算属性
-"""
+"""项目统一配置中心。"""
 
 from __future__ import annotations
 
@@ -61,10 +21,9 @@ class Settings(BaseSettings):
     2. MySQL 配置：数据库连接参数
     3. Redis 配置：缓存和分布式锁
     4. RabbitMQ 配置：消息队列
-    5. 限流配置：API 访问频率限制
-    6. 防刷配置：恶意请求防护
-    7. LLM/RAG 配置：大语言模型和向量检索
-    8. 爬虫配置：新闻抓取参数
+    5. 令牌桶限流配置：API 访问频率限制
+    6. LLM/RAG 配置：大语言模型和向量检索
+    7. 爬虫配置：新闻抓取参数
     """
 
     model_config = SettingsConfigDict(
@@ -75,16 +34,16 @@ class Settings(BaseSettings):
     )
 
 
-    APP_NAME: str = "今日头条"  # 应用名称，用于日志和界面显示
+    APP_NAME: str = "今日头条"   # 应用名称，用于日志和界面显示
     APP_VERSION: str = "1.0.0"  # 应用版本号
-    DEBUG: bool = True  # 调试模式：开启后打印 SQL、详细错误信息等
+    DEBUG: bool = True          # 调试模式：开启后打印 SQL、详细错误信息等
 
 
 
     MYSQL_HOST: str = "127.0.0.1"  # 数据库主机地址
     MYSQL_PORT: int = 3306  # 数据库端口
     MYSQL_USER: str = "root"  # 数据库用户名
-    MYSQL_PASSWORD: str = ""  # 数据库密码（生产环境必须设置）
+    MYSQL_PASSWORD: str = ""  # 数据库密码
     MYSQL_DB_NAME: str = "news_app"  # 数据库名称
     MYSQL_DB_POOL_SIZE: int = 20  # 连接池大小：保持的活跃连接数
     MYSQL_DB_OVERFLOW: int = 40  # 溢出连接数：临时创建的额外连接数
@@ -106,22 +65,9 @@ class Settings(BaseSettings):
     RABBITMQ_VHOST: str = "/"  # RabbitMQ 虚拟主机,默认的
 
 
-    RATE_LIMIT_PER_SECOND: int = 3  # 每秒最大请求数
-    RATE_LIMIT_PER_MINUTE: int = 100  # 每分钟最大请求数
-    TOKEN_BUCKET_CAPACITY: int = 10  # 令牌桶容量：最大突发流量
-    TOKEN_RATE: float = 5.0  # 令牌生成速率：每秒补充的令牌数
-    RATE_LIMIT_DIMENSION: str = "combined"  # 限流维度：ip/user/combined
-
-
-
-    IP_RATE_LIMIT: int = 60  # 单 IP 每分钟最大请求数
-    USER_RATE_LIMIT: int = 100  # 单用户每分钟最大请求数
-    MALICIOUS_THRESHOLD: int = 10  # 恶意请求判定阈值
-    BLACKLIST_DURATION: int = 3600  # 黑名单持续时间（秒）
-    SLIDING_WINDOW_SIZE: int = 60  # 滑动窗口大小（秒）
-    ENABLE_LOCAL_FALLBACK: bool = True  # Redis 不可用时是否降级到本地限流
-    RETRY_AFTER: int = 1  # 限流响应中的 Retry-After 头（秒）
-    ENABLE_RATE_LIMIT_LOGGING: bool = True  # 是否记录限流日志
+    # 令牌桶限流配置
+    TOKEN_BUCKET_CAPACITY: int = 10  # 令牌桶容量：最大突发请求数
+    TOKEN_BUCKET_RATE: float = 5.0  # 令牌生成速率：每秒补充的令牌数
 
 
 

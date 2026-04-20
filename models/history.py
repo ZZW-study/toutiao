@@ -36,44 +36,7 @@ from utils.repr_return import generate_repr
 
 
 class ViewHistory(Base):
-    """用户浏览历史表模型。
-
-    记录用户浏览新闻的历史，支持：
-    - 浏览记录展示
-    - 个性化推荐
-    - 用户行为分析
-
-    表名：history
-
-    字段说明：
-    ----------
-    id: 历史记录 ID，主键自增
-    user_id: 用户 ID，外键关联 User 表
-    news_id: 新闻 ID，外键关联 News 表
-    view_time: 浏览时间，记录最近一次浏览的时间
-
-    约束设计：
-    ----------
-    - user_news_unique: (user_id, news_id) 唯一约束
-      - 同一用户对同一新闻只保留一条记录
-      - 再次浏览时更新 view_time（业务层处理）
-
-    索引设计：
-    ----------
-    - fk_history_news_idx: news_id 索引
-      - 加速查询"新闻被多少人看过"
-      - 支持热度统计
-    - idx_history_user_id: user_id 索引
-      - 加速查询"用户浏览历史列表"
-      - 高频查询场景
-    - idx_history_view_time: view_time 索引
-      - 加速按时间排序查询
-      - 支持"最近浏览"功能
-
-    为什么不继承 TimestampMixin？
-    - 只需要记录浏览时间，不需要创建/更新时间
-    - view_time 会在再次浏览时更新
-    """
+    """用户浏览历史表模型。"""
 
     __tablename__ = "history"
 
