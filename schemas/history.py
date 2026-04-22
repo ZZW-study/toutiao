@@ -31,8 +31,9 @@ class ViewHistoryResponse(BaseModel):
 
 
 class ViewHistory(NewsItemBase):
-    """浏览历史列表中的新闻项，继承基础字段并补充浏览时间。"""
+    """浏览历史列表中的新闻项。"""
 
+    history_id: int = Field(..., alias="historyId")
     view_time: datetime = Field(..., alias="viewTime")
 
     model_config = ConfigDict(

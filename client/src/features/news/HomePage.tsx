@@ -1,5 +1,5 @@
+import { startTransition, useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
 
 import { getErrorMessage } from "../../api/errors";
 import { CategoryTabs } from "../../components/CategoryTabs";
@@ -54,48 +54,63 @@ export function HomePage() {
     Boolean(activeCategory),
   );
   const newsList = newsQuery.data?.list ?? [];
-  const leadStory = page === 1 ? newsList[0] ?? null : null;
-  const streamItems =
-    page === 1 && leadStory ? newsList.slice(1) : newsList;
+  const leadStory = newsList[0] ?? null;
+  const streamItems = leadStory ? newsList.slice(1) : newsList;
 
   const updateCategory = (categoryId: number) => {
     const nextSearchParams = new URLSearchParams(searchParams);
     nextSearchParams.set("category", String(categoryId));
     nextSearchParams.set("page", "1");
-    setSearchParams(nextSearchParams);
+    startTransition(() => {
+      setSearchParams(nextSearchParams);
+    });
   };
 
   const updatePage = (nextPage: number) => {
     const nextSearchParams = new URLSearchParams(searchParams);
     nextSearchParams.set("page", String(nextPage));
-    setSearchParams(nextSearchParams);
+    startTransition(() => {
+      setSearchParams(nextSearchParams);
+    });
   };
 
   return (
     <div className="page page--home">
-      <section className="home-intro reveal">
-        <div className="home-intro__copy">
-          <p className="eyebrow">Today&apos;s Desk</p>
-          <h1>头条编辑台</h1>
-          <p className="home-intro__description">
-            用桌面视图查看新闻主线，先抓住重点，再进入完整报道。
+      <section className="hero-panel">
+        <div className="hero-panel__copy">
+          <p className="eyebrow">Headline Stream</p>
+          <h1>今日要闻，一眼扫清主线。</h1>
+          <p>
+            用频道切换组织信息流，用详情页完成深度阅读，用 AI
+            问答快速压缩信息密度。
           </p>
+          <div className="hero-panel__actions">
+            <Link to="/ask" className="button button--primary">
+              去问 AI
+            </Link>
+            <span className="hero-panel__meta">
+              当前频道：{activeCategory?.name ?? "加载中"}
+            </span>
+          </div>
         </div>
 
-        <aside className="home-intro__aside">
-          <span>Current Section</span>
-          <strong>{activeCategory?.name ?? "等待分类"}</strong>
-          <Link to="/ask" className="text-action">
-            进入 AI 问答
-          </Link>
-        </aside>
+        <div className="hero-panel__stats">
+          <div>
+            <strong>{categories.length}</strong>
+            <span>频道数量</span>
+          </div>
+          <div>
+            <strong>{newsQuery.data?.total ?? 0}</strong>
+            <span>当前频道内容数</span>
+          </div>
+        </div>
       </section>
 
       {categoriesQuery.isLoading ? (
-        <LoadingBlock label="正在加载栏目..." />
+        <LoadingBlock label="正在加载频道..." />
       ) : categoriesQuery.isError ? (
         <ErrorNotice
-          title="栏目加载失败"
+          title="频道加载失败"
           message={getErrorMessage(categoriesQuery.error)}
           onRetry={() => {
             void categoriesQuery.refetch();
@@ -111,9 +126,9 @@ export function HomePage() {
 
       {activeCategory ? (
         <section className="home-grid">
-          <div className="home-grid__lead reveal">
+          <div className="home-grid__lead">
             {newsQuery.isLoading ? (
-              <LoadingBlock label="正在整理焦点新闻..." />
+              <LoadingBlock label="正在整理头条焦点..." />
             ) : newsQuery.isError ? (
               <ErrorNotice
                 title="新闻列表加载失败"
@@ -125,32 +140,27 @@ export function HomePage() {
             ) : leadStory ? (
               <LeadStory item={leadStory} />
             ) : (
-              <div className="section-sheet">
-                <p className="eyebrow">Section Brief</p>
-                <h2>{activeCategory.name}</h2>
-                <p>
-                  第 {page} 页当前没有焦点位，右侧保留列表流继续阅读。
-                </p>
-              </div>
+              <EmptyState
+                title="当前频道暂无头条"
+                description="换一个频道试试，或者稍后再回来刷新。"
+              />
             )}
           </div>
 
-          <div className="home-grid__stream">
-            <header className="stream-head">
+          <div className="stream-panel">
+            <div className="section-heading">
               <div>
-                <p className="eyebrow">News Stream</p>
+                <p className="eyebrow">News Feed</p>
                 <h2>{activeCategory.name}</h2>
               </div>
-              <span>
-                {newsQuery.data?.total ?? 0} 条内容
-              </span>
-            </header>
+              <span>{newsQuery.data?.total ?? 0} 条</span>
+            </div>
 
             {newsQuery.isLoading ? (
-              <LoadingBlock label="正在加载新闻列表..." />
+              <LoadingBlock label="正在加载新闻流..." />
             ) : newsQuery.isError ? (
               <ErrorNotice
-                title="新闻列表加载失败"
+                title="新闻流加载失败"
                 message={getErrorMessage(newsQuery.error)}
                 onRetry={() => {
                   void newsQuery.refetch();
@@ -162,15 +172,10 @@ export function HomePage() {
                   <NewsFeedItem key={item.id} item={item} />
                 ))}
               </div>
-            ) : newsList.length ? (
-              <EmptyState
-                title="本页只有焦点文章"
-                description="可以翻到下一页，或切换到其他栏目继续浏览。"
-              />
             ) : (
               <EmptyState
-                title="当前栏目还没有内容"
-                description="稍后再看，或切换到其他栏目。"
+                title="这一页没有更多内容"
+                description="可以翻到下一页，或者切换到其他频道继续浏览。"
               />
             )}
 

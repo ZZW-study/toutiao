@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, startTransition, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { splitParagraphs } from "../../app/format";
@@ -22,36 +22,40 @@ export function AskPage() {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextQuery = draft.trim();
-    if (!nextQuery) {
-      return;
-    }
 
-    setSearchParams({ q: nextQuery });
+    startTransition(() => {
+      if (nextQuery) {
+        setSearchParams({ q: nextQuery });
+        return;
+      }
+
+      setSearchParams({});
+    });
   };
 
   return (
     <div className="page page--ask">
-      <section className="ask-hero reveal">
-        <div className="ask-hero__copy">
+      <section className="ask-header">
+        <div className="ask-header__copy">
           <p className="eyebrow">AI Briefing</p>
-          <h1>把新闻问题交给问答席</h1>
+          <h1>像搜索一样提问，像编辑一样看结果。</h1>
           <p>
-            输入一个问题，快速获得总结与相关新闻索引。
+            输入问题后，左边得到结构化答案，右边拿到可继续阅读的相关新闻。
           </p>
         </div>
 
         <form className="ask-form" onSubmit={handleSubmit}>
           <label className="ask-form__label" htmlFor="ask-query">
-            输入新闻问题
+            输入一个新闻问题
           </label>
           <textarea
             id="ask-query"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="例如：帮我总结一下今天的科技新闻重点"
+            placeholder="例如：帮我总结今天的科技新闻重点"
           />
-          <button type="submit" className="ask-form__submit">
-            开始追问
+          <button type="submit" className="button button--primary">
+            生成答案
           </button>
         </form>
       </section>
@@ -59,7 +63,7 @@ export function AskPage() {
       {!query ? (
         <EmptyState
           title="还没有输入问题"
-          description="先给 AI 一个问题，再查看回答和联读内容。"
+          description="先给 AI 一个问题，再查看总结和联读内容。"
         />
       ) : chatQuery.isLoading ? (
         <LoadingBlock label="AI 正在整理答案..." />
@@ -75,8 +79,11 @@ export function AskPage() {
         <section className="ask-result">
           <article className="answer-sheet">
             <div className="section-heading">
-              <p className="eyebrow">Answer</p>
-              <h2>AI 回答</h2>
+              <div>
+                <p className="eyebrow">Answer</p>
+                <h2>AI 回答</h2>
+              </div>
+              <span>循环次数 {chatQuery.data.loopCount}</span>
             </div>
             <div className="answer-sheet__body">
               {splitParagraphs(chatQuery.data.answer).map((item) => (
@@ -85,10 +92,12 @@ export function AskPage() {
             </div>
           </article>
 
-          <aside className="ask-related">
+          <aside className="answer-side">
             <div className="section-heading">
-              <p className="eyebrow">Related Coverage</p>
-              <h2>相关新闻</h2>
+              <div>
+                <p className="eyebrow">Coverage</p>
+                <h2>相关新闻</h2>
+              </div>
             </div>
 
             {chatQuery.data.newsList.length ? (
@@ -100,7 +109,7 @@ export function AskPage() {
             ) : (
               <EmptyState
                 title="没有关联新闻"
-                description="当前回答没有返回联读条目。"
+                description="当前问题没有返回联读条目。"
               />
             )}
           </aside>

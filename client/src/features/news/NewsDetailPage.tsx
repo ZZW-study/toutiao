@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import {
@@ -5,18 +7,44 @@ import {
   formatViewCount,
   splitParagraphs,
 } from "../../app/format";
+import { addHistory } from "../../api/history";
 import { getErrorMessage } from "../../api/errors";
 import { EmptyState } from "../../components/EmptyState";
 import { ErrorNotice } from "../../components/ErrorNotice";
+import { FavoriteButton } from "../../components/FavoriteButton";
 import { LoadingBlock } from "../../components/LoadingBlock";
 import { NewsFeedItem } from "../../components/NewsFeedItem";
+import { useAuth } from "../auth/useAuth";
 import { useNewsDetail } from "./hooks";
 
 export function NewsDetailPage() {
   const { id } = useParams();
+  const { isAuthenticated } = useAuth();
   const newsId = Number(id);
   const isValidId = Number.isInteger(newsId) && newsId > 0;
   const detailQuery = useNewsDetail(newsId, isValidId);
+  const recordedNewsId = useRef<number | null>(null);
+  const historyMutation = useMutation({
+    mutationFn: addHistory,
+  });
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      !detailQuery.data ||
+      recordedNewsId.current === newsId
+    ) {
+      return;
+    }
+
+    recordedNewsId.current = newsId;
+    void historyMutation.mutateAsync(newsId).catch(() => {});
+  }, [
+    detailQuery.data,
+    historyMutation,
+    isAuthenticated,
+    newsId,
+  ]);
 
   if (!isValidId) {
     return (
@@ -65,56 +93,62 @@ export function NewsDetailPage() {
   const paragraphs = splitParagraphs(detailQuery.data.content);
 
   return (
-    <article className="page page--article">
-      <header className="article-head reveal">
-        <Link to="/" className="back-link">
-          返回新闻首页
-        </Link>
-        <p className="eyebrow">Story File</p>
-        <h1>{detailQuery.data.title}</h1>
-        <div className="story-meta">
-          <span>{detailQuery.data.author ?? "编辑部"}</span>
-          <span>
-            {formatPublishTime(detailQuery.data.publishTime)}
-          </span>
-          <span>{formatViewCount(detailQuery.data.views)}</span>
-        </div>
-      </header>
+    <article className="page page--detail">
+      <div className="detail-layout">
+        <section className="detail-main">
+          <header className="article-head">
+            <Link to="/" className="back-link">
+              返回首页
+            </Link>
+            <p className="eyebrow">Story</p>
+            <h1>{detailQuery.data.title}</h1>
+            <div className="story-meta">
+              <span>{detailQuery.data.author ?? "头条编辑部"}</span>
+              <span>{formatPublishTime(detailQuery.data.publishTime)}</span>
+              <span>{formatViewCount(detailQuery.data.views)}</span>
+            </div>
+            <div className="article-head__actions">
+              <FavoriteButton newsId={detailQuery.data.id} />
+            </div>
+          </header>
 
-      {detailQuery.data.image ? (
-        <div className="article-visual">
-          <img
-            src={detailQuery.data.image}
-            alt={detailQuery.data.title}
-          />
-        </div>
-      ) : null}
+          {detailQuery.data.image ? (
+            <div className="article-visual">
+              <img
+                src={detailQuery.data.image}
+                alt={detailQuery.data.title}
+              />
+            </div>
+          ) : null}
 
-      <section className="article-body">
-        {paragraphs.map((paragraph) => (
-          <p key={paragraph}>{paragraph}</p>
-        ))}
-      </section>
-
-      <section className="related-panel">
-        <div className="section-heading">
-          <p className="eyebrow">Related News</p>
-          <h2>继续阅读</h2>
-        </div>
-
-        {detailQuery.data.relatedNews.length ? (
-          <div className="news-stream">
-            {detailQuery.data.relatedNews.map((item) => (
-              <NewsFeedItem key={item.id} item={item} />
+          <section className="article-body">
+            {paragraphs.map((paragraph) => (
+              <p key={paragraph}>{paragraph}</p>
             ))}
+          </section>
+        </section>
+
+        <aside className="detail-side">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Related</p>
+              <h2>继续阅读</h2>
+            </div>
           </div>
-        ) : (
-          <EmptyState
-            title="暂无相关推荐"
-            description="这篇报道暂时没有更多联读内容。"
-          />
-        )}
-      </section>
+          {detailQuery.data.relatedNews.length ? (
+            <div className="news-stream">
+              {detailQuery.data.relatedNews.map((item) => (
+                <NewsFeedItem key={item.id} item={item} />
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="暂无相关推荐"
+              description="这篇报道暂时没有更多联读内容。"
+            />
+          )}
+        </aside>
+      </div>
     </article>
   );
 }

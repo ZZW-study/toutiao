@@ -9,5 +9,6 @@ export function useChatResult(query: string) {
     queryKey: ["chat", normalizedQuery],
     queryFn: () => fetchChatResult(normalizedQuery),
     enabled: Boolean(normalizedQuery),
+    retry: false,
   });
 }

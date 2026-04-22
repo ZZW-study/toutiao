@@ -17,6 +17,14 @@ describe("AskPage", () => {
       vi.fn((input: string | URL) => {
         const url = new URL(String(input));
 
+        if (url.pathname === "/api/news/categories") {
+          return jsonResponse({
+            code: 200,
+            message: "ok",
+            data: [{ id: 1, name: "推荐" }],
+          });
+        }
+
         if (url.pathname === "/chat/") {
           return jsonResponse({
             answer: "这是答案",
@@ -41,10 +49,10 @@ describe("AskPage", () => {
     renderApp(["/ask"]);
 
     await user.type(
-      screen.getByLabelText("输入新闻问题"),
+      screen.getByLabelText("输入一个新闻问题"),
       "半导体",
     );
-    await user.click(screen.getByRole("button", { name: "开始追问" }));
+    await user.click(screen.getByRole("button", { name: "生成答案" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("location-probe")).toHaveTextContent(
@@ -63,6 +71,14 @@ describe("AskPage", () => {
       "fetch",
       vi.fn((input: string | URL) => {
         const url = new URL(String(input));
+
+        if (url.pathname === "/api/news/categories") {
+          return jsonResponse({
+            code: 200,
+            message: "ok",
+            data: [{ id: 1, name: "推荐" }],
+          });
+        }
 
         if (url.pathname !== "/chat/") {
           throw new Error(`Unhandled URL: ${url.toString()}`);
@@ -96,7 +112,7 @@ describe("AskPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("处理失败")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "重试" }));
+    await user.click(screen.getByRole("button", { name: "重新加载" }));
 
     expect(await screen.findByText("重试成功")).toBeInTheDocument();
   });

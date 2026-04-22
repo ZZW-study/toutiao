@@ -1,12 +1,31 @@
 import type {
+  AuthSession,
   ChatResult,
+  FavoriteItem,
+  FavoriteListResult,
+  FavoriteStatus,
+  HistoryItem,
+  HistoryListResult,
   NewsCategory,
   NewsDetail,
   NewsListItem,
   NewsListResult,
+  UserInfo,
 } from "./types";
 
 const EMPTY_NEWS_LIST: NewsListResult = {
+  list: [],
+  total: 0,
+  hasMore: false,
+};
+
+const EMPTY_FAVORITE_LIST: FavoriteListResult = {
+  list: [],
+  total: 0,
+  hasMore: false,
+};
+
+const EMPTY_HISTORY_LIST: HistoryListResult = {
   list: [],
   total: 0,
   hasMore: false,
@@ -57,6 +76,22 @@ function asString(value: unknown, fallback = "") {
   return asNullableString(value) ?? fallback;
 }
 
+function asBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value === "true";
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return fallback;
+}
+
 function resolvePublishTime(value: Record<string, unknown>) {
   return asNullableString(
     pickFirst(value, ["publishTime", "publishedTime", "publish_time"]),
@@ -71,17 +106,10 @@ function resolveCategoryId(value: Record<string, unknown>) {
 }
 
 function resolveHasMore(value: Record<string, unknown>) {
-  const rawValue = pickFirst(value, ["hasMore", "has_more"]);
-
-  if (typeof rawValue === "boolean") {
-    return rawValue;
-  }
-
-  if (typeof rawValue === "string") {
-    return rawValue === "true";
-  }
-
-  return Boolean(rawValue);
+  return asBoolean(
+    pickFirst(value, ["hasMore", "has_more"]),
+    false,
+  );
 }
 
 export function mapNewsCategory(raw: unknown): NewsCategory | null {
@@ -186,5 +214,138 @@ export function mapChatResult(raw: unknown): ChatResult {
       pickFirst(raw, ["loop_count", "loopCount"]),
       0,
     ),
+  };
+}
+
+export function mapUserInfo(raw: unknown): UserInfo {
+  if (!isRecord(raw)) {
+    throw new Error("用户信息格式错误");
+  }
+
+  const id = asNumber(raw.id, 0);
+  const username = asString(raw.username);
+
+  if (!id || !username) {
+    throw new Error("用户信息格式错误");
+  }
+
+  return {
+    id,
+    username,
+    nickname: asNullableString(raw.nickname),
+    avatar: asNullableString(raw.avatar),
+    gender: asNullableString(raw.gender),
+    bio: asNullableString(raw.bio),
+    phone: asNullableString(raw.phone),
+  };
+}
+
+export function mapAuthSession(raw: unknown): AuthSession {
+  if (!isRecord(raw)) {
+    throw new Error("登录结果格式错误");
+  }
+
+  const token = asString(raw.token);
+  const userInfo = mapUserInfo(
+    pickFirst(raw, ["userInfo", "user_info"]),
+  );
+
+  if (!token) {
+    throw new Error("登录结果格式错误");
+  }
+
+  return { token, userInfo };
+}
+
+export function mapFavoriteStatus(raw: unknown): FavoriteStatus {
+  if (!isRecord(raw)) {
+    return { isFavorite: false };
+  }
+
+  return {
+    isFavorite: asBoolean(
+      pickFirst(raw, ["isFavorite", "is_favorite"]),
+      false,
+    ),
+  };
+}
+
+export function mapFavoriteItem(raw: unknown): FavoriteItem | null {
+  const baseItem = mapNewsItem(raw);
+  if (!baseItem || !isRecord(raw)) {
+    return null;
+  }
+
+  const favoriteId = asNumber(
+    pickFirst(raw, ["favoriteId", "favorite_id"]),
+    0,
+  );
+
+  if (!favoriteId) {
+    return null;
+  }
+
+  return {
+    ...baseItem,
+    favoriteId,
+    favoriteTime: asNullableString(
+      pickFirst(raw, ["favoriteTime", "favorite_time"]),
+    ),
+  };
+}
+
+export function mapFavoriteListResult(raw: unknown): FavoriteListResult {
+  if (!isRecord(raw)) {
+    return EMPTY_FAVORITE_LIST;
+  }
+
+  const rawList = Array.isArray(raw.list) ? raw.list : [];
+
+  return {
+    list: rawList
+      .map(mapFavoriteItem)
+      .filter((item): item is FavoriteItem => item !== null),
+    total: asNumber(raw.total, rawList.length),
+    hasMore: resolveHasMore(raw),
+  };
+}
+
+export function mapHistoryItem(raw: unknown): HistoryItem | null {
+  const baseItem = mapNewsItem(raw);
+  if (!baseItem || !isRecord(raw)) {
+    return null;
+  }
+
+  const historyId = asNumber(
+    pickFirst(raw, ["historyId", "history_id"]),
+    0,
+  );
+
+  if (!historyId) {
+    return null;
+  }
+
+  return {
+    ...baseItem,
+    historyId,
+    viewTime: asNullableString(
+      pickFirst(raw, ["viewTime", "view_time"]),
+    ),
+  };
+}
+
+export function mapHistoryListResult(raw: unknown): HistoryListResult {
+  if (!isRecord(raw)) {
+    return EMPTY_HISTORY_LIST;
+  }
+
+  const rawList = Array.isArray(raw.list) ? raw.list : [];
+
+  return {
+    list: rawList
+      .map(mapHistoryItem)
+      .filter((item): item is HistoryItem => item !== null),
+    total: asNumber(raw.total, rawList.length),
+    hasMore: resolveHasMore(raw),
   };
 }
