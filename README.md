@@ -255,3 +255,56 @@ docker-compose logs -f
 ## 📄 许可证
 
 MIT License
+
+## One-Command Dev Startup
+
+项目现在支持在仓库根目录一条命令同时启动后端和前端开发服务。
+
+### 首次准备
+
+先安装根目录开发编排依赖：
+
+```bash
+npm install
+```
+
+再安装前端依赖：
+
+```bash
+npm run setup:client
+```
+
+如果你已经在 `client/` 目录执行过 `npm install`，这一步可以跳过。
+
+### 日常开发启动
+
+在仓库根目录执行：
+
+```bash
+npm run dev
+```
+
+这个命令会同时启动：
+
+- 后端：`python main.py`
+- 前端：`npm --prefix client run dev`
+
+默认访问地址：
+
+- 前端：`http://localhost:5173`
+- 后端：`http://127.0.0.1:8000`
+- 后端文档：`http://127.0.0.1:8000/docs`
+
+### 单独启动某一端
+
+只启动后端：
+
+```bash
+npm run dev:server
+```
+
+只启动前端：
+
+```bash
+npm run dev:client
+```

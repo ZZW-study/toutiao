@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from agents.state import AgentState
-from toutiao.agents.services.news_retriever import get_news_retriever_service
+from agents.services.news_retriever import get_news_retriever_service
 
 
 async def retrieve_node(state: AgentState) -> dict[str, Any]:
