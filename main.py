@@ -7,20 +7,30 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import importlib.util
+from pathlib import Path
 import subprocess
+import sys
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from rag import get_embedding_service, get_vectorstore_service
 from routers import chat, favorite, history, news, users
-from toutiao.cache.redis_cache import CacheUtil
-from toutiao.configs.settings import get_settings
+from cache.redis_cache import CacheUtil
+from configs.settings import get_settings
 from utils.exception_handlers import register_exception_handlers
 from utils.logger import get_logger
 
 settings = get_settings()
 logger = get_logger(name="Application")
+PROJECT_ROOT = Path(__file__).resolve().parent
+CELERY_BASE_COMMAND = [sys.executable, "-m", "celery"]
+DEFAULT_CELERY_WORKER_POOL = (
+    "solo"
+    if sys.platform.startswith("win") or importlib.util.find_spec("eventlet") is None
+    else "eventlet"
+)
 
 # Celery 子进程
 # 子进程是操作系统级别的独立进程，有独立的内存空间和 PID
@@ -47,8 +57,17 @@ async def lifespan(_: FastAPI):
     # Worker 负责从队列消费任务并执行
     # subprocess.Popen 创建新进程，不会阻塞主进程
     celery_worker_process = subprocess.Popen(
-        ["celery", "-A", "middlewares.celery", "worker", "-l", "info", "-P", "eventlet"],
-        cwd="toutiao"
+        [
+            *CELERY_BASE_COMMAND,
+            "-A",
+            "middlewares.celery",
+            "worker",
+            "-l",
+            "info",
+            "-P",
+            DEFAULT_CELERY_WORKER_POOL,
+        ],
+        cwd=str(PROJECT_ROOT),
     )
     logger.info("Celery Worker 已启动")
 
@@ -56,8 +75,15 @@ async def lifespan(_: FastAPI):
     # Beat 负责定时调度，按 CELERY_BEAT_SCHEDULE 配置触发任务
     # 只调度定时任务，代码调用触发的任务不需要 Beat
     celery_beat_process = subprocess.Popen(
-        ["celery", "-A", "middlewares.celery", "beat", "-l", "info"],
-        cwd="toutiao"
+        [
+            *CELERY_BASE_COMMAND,
+            "-A",
+            "middlewares.celery",
+            "beat",
+            "-l",
+            "info",
+        ],
+        cwd=str(PROJECT_ROOT),
     )
     logger.info("Celery Beat 已启动")
 

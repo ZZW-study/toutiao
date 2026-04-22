@@ -1,0 +1,14 @@
+{
+  "name": "toutiao-dev-launcher",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "concurrently -k --names server,client --prefix-colors cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "python main.py",
+    "dev:client": "npm --prefix client run dev",
+    "setup:client": "npm --prefix client install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -106,3 +106,10 @@ build/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Frontend
+node_modules/
+client/node_modules/
+client/dist/
+client/coverage/
+celerybeat-schedule*
