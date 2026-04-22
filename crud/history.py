@@ -66,7 +66,11 @@ async def get_view_history_list(
 
     offset = (page - 1) * page_size
     result = await db.execute(
-        select(News, ViewHistory.view_time.label("viewTime"))
+        select(
+            News,
+            ViewHistory.id.label("historyId"),
+            ViewHistory.view_time.label("viewTime"),
+        )
         .join(ViewHistory, ViewHistory.news_id == News.id)
         .where(ViewHistory.user_id == user_id)
         .order_by(ViewHistory.view_time.desc())

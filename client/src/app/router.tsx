@@ -5,8 +5,11 @@ import {
 
 import { AppShell } from "../components/AppShell";
 import { AskPage } from "../features/chat/AskPage";
+import { FavoritesPage } from "../features/favorites/FavoritesPage";
+import { HistoryPage } from "../features/history/HistoryPage";
 import { HomePage } from "../features/news/HomePage";
 import { NewsDetailPage } from "../features/news/NewsDetailPage";
+import { ProfilePage } from "../features/profile/ProfilePage";
 
 export const appRoutes: RouteObject[] = [
   {
@@ -23,6 +26,18 @@ export const appRoutes: RouteObject[] = [
       {
         path: "ask",
         element: <AskPage />,
+      },
+      {
+        path: "favorites",
+        element: <FavoritesPage />,
+      },
+      {
+        path: "history",
+        element: <HistoryPage />,
+      },
+      {
+        path: "profile",
+        element: <ProfilePage />,
       },
     ],
   },

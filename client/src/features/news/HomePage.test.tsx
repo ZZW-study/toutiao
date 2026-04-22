@@ -6,11 +6,14 @@ import { jsonResponse } from "../../test/http";
 import { renderApp } from "../../test/renderApp";
 
 const categoriesPayload = [
-  { id: 1, name: "要闻" },
+  { id: 1, name: "推荐" },
   { id: 7, name: "科技" },
 ];
 
-function createNewsEnvelope(list: Array<Record<string, unknown>>, hasMore = false) {
+function createNewsEnvelope(
+  list: Array<Record<string, unknown>>,
+  hasMore = false,
+) {
   return {
     code: 200,
     message: "ok",
@@ -187,7 +190,7 @@ describe("HomePage", () => {
     renderApp(["/?category=1&page=1"]);
 
     expect(
-      await screen.findByRole("heading", { name: "当前栏目还没有内容" }),
+      await screen.findByRole("heading", { name: "当前频道暂无头条" }),
     ).toBeInTheDocument();
   });
 });
