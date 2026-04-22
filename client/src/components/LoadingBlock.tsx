@@ -2,11 +2,13 @@ interface LoadingBlockProps {
   label: string;
 }
 
-export function LoadingBlock({ label }: LoadingBlockProps) {
+export function LoadingBlock({
+  label,
+}: LoadingBlockProps) {
   return (
-    <div className="loading-block" aria-live="polite" aria-busy="true">
-      <div className="loading-block__shimmer" />
+    <section className="loading-block" aria-live="polite">
       <p>{label}</p>
-    </div>
+      <div className="loading-block__bar" />
+    </section>
   );
 }

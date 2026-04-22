@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""用户模块的请求与响应模型。
-
-定义用户相关接口的数据格式：
-- 请求模型：验证客户端提交的数据
-- 响应模型：统一服务端返回的数据格式
-"""
+"""用户模块的请求与响应模型。"""
 
 from __future__ import annotations
 
@@ -21,7 +16,7 @@ class UserRequest(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
-    """更新用户资料请求体。所有字段可选，支持部分更新。"""
+    """更新用户资料请求体。"""
 
     nickname: Optional[str] = None
     avatar: Optional[str] = None
@@ -38,12 +33,13 @@ class UserChangePasswordRequest(BaseModel):
 
 
 class UserInfoBase(BaseModel):
-    """用户公开资料基础字段（不含敏感信息）。"""
+    """用户公开资料字段。"""
 
     nickname: Optional[str] = Field(None, max_length=50, description="昵称")
-    avatar: Optional[str] = Field(None, max_length=255, description="头像URL")
+    avatar: Optional[str] = Field(None, max_length=255, description="头像 URL")
     gender: Optional[str] = Field(None, max_length=10, description="性别")
     bio: Optional[str] = Field(None, max_length=500, description="个人简介")
+    phone: Optional[str] = Field(None, max_length=20, description="手机号")
 
 
 class UserInfoResponse(UserInfoBase):

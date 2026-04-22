@@ -1,40 +1,38 @@
 interface PaginationProps {
-  page: number;
-  total: number;
   hasMore: boolean;
   onPageChange: (page: number) => void;
+  page: number;
+  total: number;
 }
 
 export function Pagination({
-  page,
-  total,
   hasMore,
   onPageChange,
+  page,
+  total,
 }: PaginationProps) {
   return (
-    <nav className="pagination" aria-label="新闻分页">
+    <div className="pagination">
       <button
         type="button"
-        onClick={() => onPageChange(page - 1)}
+        className="button button--ghost"
         disabled={page <= 1}
-        className="pagination__button"
+        onClick={() => onPageChange(page - 1)}
       >
         上一页
       </button>
-
       <div className="pagination__meta">
-        <span>第 {page} 页</span>
-        <small>共 {total} 条</small>
+        <strong>第 {page} 页</strong>
+        <span>共 {total} 条内容</span>
       </div>
-
       <button
         type="button"
-        onClick={() => onPageChange(page + 1)}
+        className="button button--ghost"
         disabled={!hasMore}
-        className="pagination__button"
+        onClick={() => onPageChange(page + 1)}
       >
         下一页
       </button>
-    </nav>
+    </div>
   );
 }

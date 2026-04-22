@@ -61,9 +61,10 @@ async def get_view_history_list(
     view_history_list = [
         {
             **news.__dict__,
+            "historyId": history_id,
             "viewTime": view_time,
         }
-        for news, view_time in view_history_rows
+        for news, history_id, view_time in view_history_rows
     ]
 
     data = ViewHistoryListResponse(list=view_history_list, total=total, hasMore=has_more)

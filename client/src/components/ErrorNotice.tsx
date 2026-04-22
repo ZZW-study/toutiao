@@ -1,28 +1,28 @@
 interface ErrorNoticeProps {
-  title: string;
   message: string;
   onRetry?: () => void;
+  title: string;
 }
 
 export function ErrorNotice({
-  title,
   message,
   onRetry,
+  title,
 }: ErrorNoticeProps) {
   return (
-    <div className="error-notice" role="alert">
-      <p className="eyebrow">Error</p>
+    <section className="error-notice">
+      <p className="eyebrow">Load Failed</p>
       <h3>{title}</h3>
       <p>{message}</p>
       {onRetry ? (
         <button
           type="button"
+          className="button button--primary"
           onClick={onRetry}
-          className="text-action text-action--button"
         >
-          重试
+          重新加载
         </button>
       ) : null}
-    </div>
+    </section>
   );
 }

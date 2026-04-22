@@ -36,3 +36,57 @@ export interface ChatResult {
   newsList: NewsListItem[];
   loopCount: number;
 }
+
+export interface UserInfo {
+  id: number;
+  username: string;
+  nickname: string | null;
+  avatar: string | null;
+  gender: string | null;
+  bio: string | null;
+  phone: string | null;
+}
+
+export interface AuthSession {
+  token: string;
+  userInfo: UserInfo;
+}
+
+export interface UpdateUserPayload {
+  nickname?: string;
+  avatar?: string;
+  gender?: string;
+  bio?: string;
+  phone?: string;
+}
+
+export interface ChangePasswordPayload {
+  oldPassword: string;
+  newPassword: string;
+}
+
+export interface FavoriteStatus {
+  isFavorite: boolean;
+}
+
+export interface FavoriteItem extends NewsListItem {
+  favoriteId: number;
+  favoriteTime: string | null;
+}
+
+export interface FavoriteListResult {
+  list: FavoriteItem[];
+  total: number;
+  hasMore: boolean;
+}
+
+export interface HistoryItem extends NewsListItem {
+  historyId: number;
+  viewTime: string | null;
+}
+
+export interface HistoryListResult {
+  list: HistoryItem[];
+  total: number;
+  hasMore: boolean;
+}

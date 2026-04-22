@@ -9,9 +9,8 @@ export function formatPublishTime(value: string | null) {
   }
 
   return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);

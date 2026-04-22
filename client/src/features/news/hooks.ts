@@ -24,6 +24,7 @@ export function useNewsList(
     queryKey: ["news-list", categoryId, page],
     queryFn: () => fetchNewsList(categoryId, page, PAGE_SIZE),
     enabled,
+    retry: false,
   });
 }
 
@@ -35,5 +36,6 @@ export function useNewsDetail(
     queryKey: ["news-detail", newsId],
     queryFn: () => fetchNewsDetail(newsId),
     enabled,
+    retry: false,
   });
 }
