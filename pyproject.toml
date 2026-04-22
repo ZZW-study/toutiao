@@ -1,0 +1,42 @@
+[project]
+name = "toutiaoa"
+version = "0.1.0"
+description = "toutiaoA 新闻聚合与智能问答项目"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi==0.109.0",
+    "uvicorn==0.27.0",
+    "sqlalchemy>=2.0.35",
+    "aiomysql==0.2.0",
+    "redis==5.0.1",
+    "aiohttp==3.9.1",
+    "beautifulsoup4==4.12.3",
+    "feedparser==6.0.11",
+    "celery==5.3.6",
+    "eventlet>=0.36.1",
+    "pydantic-settings>=2.5.2",
+    "python-multipart==0.0.6",
+    "python-jose==3.3.0",
+    "passlib==1.7.4",
+    "bcrypt==4.1.2",
+    "loguru>=0.7.0",
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-community>=0.3.0",
+    "langchain-chroma>=0.1.0",
+    "langchain-huggingface>=0.1.0",
+    "chromadb>=0.5.0,<0.6.0",
+    "sentence-transformers>=2.2.0",
+    "openai>=1.0.0",
+    "onnxruntime>=1.16.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==7.4.4",
+    "pytest-asyncio==0.23.3",
+    "httpx==0.26.0",
+    "aiosqlite==0.19.0",
+]
